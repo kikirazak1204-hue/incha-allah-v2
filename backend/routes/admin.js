@@ -156,21 +156,32 @@ router.patch('/reservations/:id/statut', protect, adminOnly, async (req, res) =>
     }
 });
 
-// 🟢 PUT /api/admin/reservations/:id/assigner (CORRIGÉ EN MAJUSCULE)
+// 🟢 PUT /api/admin/reservations/:id/assigner
+//
+// ✅ CORRIGÉ : cette route mettait le statut à 'EN_PREPARATION' juste après
+// l'assignation d'un prestataire. Or routes/missions.js n'autorise le
+// prestataire à accepter/refuser une mission QUE si son statut est
+// 'EN_ATTENTE' ou 'ASSIGNEE'. Résultat : toute mission assignée par l'admin
+// devenait immédiatement bloquée — le prestataire ne pouvait plus l'accepter,
+// et DashboardFournisseur.jsx l'affichait à tort comme "matériel manquant".
+// C'était très probablement la cause principale du blocage observé.
+//
+// Exception : si l'admin coche "accord téléphonique direct obtenu", la
+// mission saute directement à 'ACCEPTEE' (prête à démarrer), sans attendre
+// que le prestataire confirme sur l'application — comportement voulu.
 router.put('/reservations/:id/assigner', protect, adminOnly, async (req, res) => {
     try {
         const { id } = req.params;
-        const { fournisseurId } = req.body;
+        const { fournisseurId, accordTelephone } = req.body;
 
         const reservation = await Reservation.findByPk(id);
         if (!reservation) {
             return res.status(404).json({ success: false, message: 'Réservation introuvable.' });
         }
 
-        await reservation.update({
-            fournisseurId,
-            statut: 'EN_PREPARATION' // Alignée sur ta base MySQL
-        });
+        const statut = accordTelephone ? 'ACCEPTEE' : 'ASSIGNEE';
+
+        await reservation.update({ fournisseurId, statut });
 
         res.json({ success: true, message: 'Fournisseur assigné avec succès.', data: reservation });
     } catch (err) {
@@ -179,7 +190,11 @@ router.put('/reservations/:id/assigner', protect, adminOnly, async (req, res) =>
     }
 });
 
-// 🟢 PUT /api/admin/reservations/:id/autoriser (CORRIGÉ EN MAJUSCULE)
+// 🟢 PUT /api/admin/reservations/:id/autoriser
+//
+// N'a de sens que lorsque le prestataire a déjà accepté la mission
+// (statut EN_VALIDATION_ADMIN) — voir le fix correspondant dans
+// MissionDetailsModal.jsx qui n'affiche plus ce bouton pour 'ASSIGNEE'.
 router.put('/reservations/:id/autoriser', protect, adminOnly, async (req, res) => {
     try {
         const { id } = req.params;
@@ -189,7 +204,7 @@ router.put('/reservations/:id/autoriser', protect, adminOnly, async (req, res) =
             return res.status(404).json({ success: false, message: 'Réservation introuvable.' });
         }
 
-        await reservation.update({ statut: 'ACCEPTEE' }); // Alignée sur ta base MySQL
+        await reservation.update({ statut: 'ACCEPTEE' });
 
         res.json({ success: true, message: 'Démarrage de la mission autorisé.', data: reservation });
     } catch (err) {
@@ -198,22 +213,17 @@ router.put('/reservations/:id/autoriser', protect, adminOnly, async (req, res) =
     }
 });
 
-// 🟢 ✨ NOUVEAU : PUT /api/admin/reservations/:id/valider (BOUTON VALIDER LA MISSION)
-router.put('/reservations/:id/valider', protect, adminOnly, async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Réservation introuvable.' });
+// SUPPRIMÉ : PUT /api/admin/reservations/:id/valider
+//
+// Cette route court-circuitait le bon d'intervention (pas de bon.valide,
+// pas de note, pas de mise à jour de la réputation du fournisseur).
+// Décision prise : un seul chemin de validation existe désormais —
+// PUT /api/bons-intervention/:id/valider — exclusivement déclenché par
+// le client depuis DashboardClient.jsx. La validation automatique après
+// 24h sans action du client est gérée par le job planifié
+// backend/jobs/autoValiderBonsIntervention.js (voir server.js).
 
-        await reservation.update({ statut: 'VALIDEE' });
-
-        res.json({ success: true, message: 'Mission validée avec succès !', data: reservation });
-    } catch (err) {
-        console.error("❌ Erreur PUT /valider :", err);
-        res.status(500).json({ success: false, message: 'Erreur serveur.', error: err.message });
-    }
-});
-
-// 🟢 ✨ NOUVEAU : PUT /api/admin/reservations/:id/refuser (BOUTON REFUSER LA MISSION)
+// 🟢 PUT /api/admin/reservations/:id/refuser
 router.put('/reservations/:id/refuser', protect, adminOnly, async (req, res) => {
     try {
         const { motif } = req.body;

@@ -36,7 +36,7 @@ const checkFournisseur = async (req, res, next) => {
 };
 
 // ==========================================
-// 🚀 NOUVELLE ROUTE : RÉSERVATIONS DU CLIENT
+// RÉSERVATIONS DU CLIENT
 // GET /api/missions/client
 // ==========================================
 router.get('/client', protect, async (req, res) => {
@@ -146,25 +146,11 @@ router.put('/:id/terminer', protect, checkFournisseur, async (req, res) => {
     }
 });
 
-// PUT /api/missions/:id/valider — CLIENT valide la prestation
-router.put('/:id/valider', protect, async (req, res) => {
-    try {
-        const mission = await Reservation.findOne({
-            where: { id: req.params.id, clientId: req.user.id }
-        });
-        if (!mission) return res.status(404).json({ success: false, message: 'Mission introuvable.' });
-        if (mission.statut !== 'TERMINEE') return res.status(400).json({ success: false, message: 'La mission n\'est pas encore terminée.' });
-
-        await mission.update({
-            statut: 'VALIDEE'
-        });
-
-        res.json({ success: true, message: 'Prestation validée. Paiement libéré au prestataire.', data: mission });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-});
+// NOTE : la validation client d'une mission terminée ne passe plus par cette
+// route. Elle se fait exclusivement via PUT /api/bons-intervention/:id/valider
+// (voir routes/bonsIntervention.js), qui est la seule route à mettre à jour
+// de façon cohérente : le statut de la réservation, le bon d'intervention
+// (valide, valideLe), la note et la moyenne du fournisseur.
 
 // PUT /api/missions/:id/materiel — Fournisseur signale manque matériel
 router.put('/:id/materiel', protect, checkFournisseur, async (req, res) => {

@@ -4,12 +4,14 @@ import {
     assignerFournisseur,
     updateReservationStatut,
     getFournisseurs,
-    getAdminFournisseurs
+    getAdminFournisseurs,
+    getBonInterventionParReservation
 } from '../util/api';
 import {
     User, Phone, MapPin, Home, Loader2, PhoneCall, Briefcase,
-    AlertCircle, CheckCircle, Clock, ShieldAlert, Star, Check
+    AlertCircle, CheckCircle, Clock, ShieldAlert, Star, Check, FileText
 } from 'lucide-react';
+import { getStatutMeta } from '../constants/statuts';
 
 export default function MissionDetailsModal({ reservation, onClose, onRefresh }) {
     // 1. ÉTATS DU COMPOSANT
@@ -24,6 +26,10 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
     const [fournisseurs, setFournisseurs] = useState([]);
     const [loadingFournisseurs, setLoadingFournisseurs] = useState(false);
 
+    // État pour le bon d'intervention (visible dès que la mission est TERMINEE ou VALIDEE)
+    const [bon, setBon] = useState(null);
+    const [loadingBon, setLoadingBon] = useState(false);
+
     // 2. CHARGEMENT ROBUSTE DES PRESTATAIRES
     useEffect(() => {
         const fetchListeFournisseurs = async () => {
@@ -31,12 +37,10 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
             try {
                 let data = await getFournisseurs();
 
-                // Extraction intelligente du tableau peu importe la structure backend
                 let list = Array.isArray(data)
                     ? data
                     : (data?.fournisseurs || data?.data || data?.utilisateurs || []);
 
-                // Si la liste est vide, tentative de secours via l'API Admin
                 if (list.length === 0) {
                     try {
                         const adminData = await getAdminFournisseurs();
@@ -50,7 +54,7 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
 
                 setFournisseurs(list);
             } catch (error) {
-                console.error("❌ Erreur lors du chargement des prestataires :", error);
+                console.error("Erreur lors du chargement des prestataires :", error);
             } finally {
                 setLoadingFournisseurs(false);
             }
@@ -59,6 +63,22 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
         if (reservation) {
             fetchListeFournisseurs();
         }
+    }, [reservation]);
+
+    // 2bis. CHARGEMENT DU BON D'INTERVENTION (visibilité admin, lecture seule)
+    useEffect(() => {
+        const statutBrutInit = reservation?.statut || reservation?.status || '';
+        if (!reservation || !['TERMINEE', 'VALIDEE'].includes(statutBrutInit)) {
+            setBon(null);
+            return;
+        }
+        let actif = true;
+        setLoadingBon(true);
+        getBonInterventionParReservation(reservation.id)
+            .then(d => { if (actif && d.success) setBon(d.data); })
+            .catch(() => { if (actif) setBon(null); })
+            .finally(() => { if (actif) setLoadingBon(false); });
+        return () => { actif = false; };
     }, [reservation]);
 
     if (!reservation) return null;
@@ -88,7 +108,6 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
     const statut = normalizeStatut(statutBrut);
     const currentFournisseurId = reservation.fournisseurId || reservation.fournisseur_id || null;
 
-    // Récupérer les infos du prestataire sélectionné en gérant correctement les IDs
     const prestataireSelectionne = fournisseurs.find(f => {
         const id = f.id ?? f.fournisseurId;
         return id !== undefined && id !== null && id.toString() === fournisseurId.toString();
@@ -115,50 +134,58 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
         handleAction(assignerFournisseur, reservation.id, parseInt(fournisseurId, 10), accordTelephone);
     };
 
-    // Helper pour le badge de statut
+    // Badge de statut — aligné sur la source unique constants/statuts.js,
+    // avec des libellés adaptés au contexte administrateur.
     const getStatusBadge = () => {
-        switch (statut) {
-            case 'EN_ATTENTE':
-            case 'PENDING':
-            case 'NOUVEAU':
-                return <span className="bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5"><Clock size={14} /> EN ATTENTE D'ASSIGNATION</span>;
-            case 'EN_VALIDATION_ADMIN':
-            case 'ASSIGNEE':
-                return <span className="bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5"><AlertCircle size={14} /> EN ATTENTE DE VALIDATION</span>;
-            case 'VALIDEE':
-            case 'ACCEPTEE':
-            case 'EN_COURS':
-                return <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5"><CheckCircle size={14} /> MISSION EN COURS</span>;
-            case 'ANNULEE':
-                return <span className="bg-rose-500/20 text-rose-300 border border-rose-500/30 px-3 py-1 rounded-full text-xs font-black flex items-center gap-1.5"><ShieldAlert size={14} /> MISSION ANNULÉE</span>;
-            default:
-                return <span className="bg-slate-500/20 text-slate-300 border border-slate-500/30 px-3 py-1 rounded-full text-xs font-black">{statutBrut}</span>;
-        }
+        const meta = getStatutMeta(statut);
+        const labelsAdmin = {
+            EN_ATTENTE: "En attente d'assignation",
+            ASSIGNEE: "Assignée — en attente d'acceptation du prestataire",
+            EN_VALIDATION_ADMIN: "Prestataire OK — en attente du feu vert admin",
+            ACCEPTEE: "Prête à démarrer",
+            EN_PREPARATION: "Préparation matériel",
+            EN_COURS: "Intervention en cours",
+            TERMINEE: "Terminée — en attente de validation client",
+            VALIDEE: "Clôturée & validée par le client",
+            ANNULEE: "Annulée",
+        };
+        const label = labelsAdmin[statut] || meta.label || statutBrut;
+        return (
+            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-black border ${meta.bg} ${meta.text} ${meta.border}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${meta.dot}`} />
+                {label}
+            </span>
+        );
     };
 
     const afficherZoneAssignation = ['EN_ATTENTE', 'NOUVEAU', 'PENDING', 'INCONNU'].includes(statut) || !currentFournisseurId || modeReassignation;
 
+    // Le feu vert n'a de sens QUE quand le prestataire a déjà accepté
+    // (statut EN_VALIDATION_ADMIN). Avant fix, 'ASSIGNEE' déclenchait aussi
+    // ce bloc, permettant à l'admin de démarrer une mission que le
+    // prestataire n'avait même pas encore acceptée.
+    const afficherFeuVert = ['EN_VALIDATION_ADMIN', 'EN_ATTENTE_VALIDATION'].includes(statut);
+
+    const total = bon ? Number(bon.montantFinal ?? (Number(bon.montantMainOeuvre || 0) + Number(bon.montantPiecesOutils || 0))) : 0;
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
             <div className="bg-[#0A0E17] border border-white/10 p-6 sm:p-8 rounded-3xl max-w-lg w-full shadow-2xl relative my-8 text-slate-100 space-y-6">
 
-                {/* BOUTON FERMER */}
                 <button
                     onClick={onClose}
                     className="absolute top-5 right-5 text-slate-400 hover:text-white bg-white/5 hover:bg-white/10 p-2 rounded-xl transition font-bold"
                 >
-                    ✕
+                    ×
                 </button>
 
-                {/* EN-TÊTE DU DOSSIER */}
                 <div>
                     <div className="flex items-center justify-between flex-wrap gap-2 pr-8 mb-2">
                         <span className="text-[11px] font-extrabold tracking-widest text-purple-400 uppercase">Administration Kanari</span>
                         {getStatusBadge()}
                     </div>
-                    <h3 className="text-xl font-black text-white flex items-center gap-2">
-                        <span>📂 Dossier #{reservation.id}</span>
-                        {/* ✅ CORRECTION : Boolean() évite l'affichage d'un 0 intempestif */}
+                    <h3 className="text-xl font-black text-white flex items-center gap-2 flex-wrap">
+                        <span>Dossier #{reservation.id}</span>
                         {Boolean(currentFournisseurId) && (
                             <span className="text-xs bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2.5 py-0.5 rounded-lg font-bold">
                                 Prestataire ID: #{currentFournisseurId}
@@ -208,15 +235,58 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                     </div>
                 </div>
 
+                {/* BON D'INTERVENTION — visibilité admin dès que la mission est terminée ou validée */}
+                {['TERMINEE', 'VALIDEE'].includes(statut) && (
+                    <div className="bg-white/[0.03] p-4 rounded-2xl border border-white/5 space-y-3">
+                        <span className="text-[10px] uppercase tracking-wider text-slate-400 font-bold flex items-center gap-1.5">
+                            <FileText size={13} className="text-amber-400" /> Bon d'intervention
+                        </span>
+
+                        {loadingBon && (
+                            <p className="text-xs text-slate-500">Chargement du bon d'intervention...</p>
+                        )}
+
+                        {!loadingBon && !bon && (
+                            <p className="text-xs text-rose-400">Aucun bon d'intervention trouvé pour cette mission — anomalie à vérifier.</p>
+                        )}
+
+                        {!loadingBon && bon && (
+                            <div className="space-y-2 text-xs">
+                                <p className="text-slate-200 whitespace-pre-line bg-black/30 p-3 rounded-xl border border-white/5">{bon.descriptionTravail}</p>
+                                {bon.piecesOutils && (
+                                    <p className="text-slate-400"><span className="text-slate-500">Pièces / matériel :</span> {bon.piecesOutils}</p>
+                                )}
+                                <div className="flex justify-between pt-2 border-t border-white/5">
+                                    <span className="text-slate-400">Total facturé au client</span>
+                                    <span className="font-black text-amber-400">{total.toLocaleString('fr-FR')} FCFA</span>
+                                </div>
+                                <div className="flex items-center justify-between pt-1">
+                                    <span className="text-slate-400">Validé par le client</span>
+                                    <span className={`font-bold ${bon.valide ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                        {bon.valide ? 'Oui' : 'Pas encore'}
+                                    </span>
+                                </div>
+                                {bon.valide && bon.note && (
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-slate-400">Note laissée par le client</span>
+                                        <span className="flex items-center gap-1 text-amber-400 font-bold">
+                                            <Star size={12} className="fill-amber-400" /> {bon.note}/5
+                                        </span>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
+
                 {/* ZONE D'ACTIONS ADMINISTRATIVES */}
                 <div className="pt-4 border-t border-white/10 space-y-4">
                     <div className="flex justify-between items-center">
                         <span className="text-xs font-black uppercase tracking-wider text-slate-300 block">
-                            🛠️ Actions Administratives :
+                            Actions Administratives
                         </span>
 
-                        {/* ✅ CORRECTION : Boolean(currentFournisseurId) */}
-                        {Boolean(currentFournisseurId) && !modeReassignation && !['ANNULEE', 'TERMINÉE', 'TERMINEE'].includes(statut) && (
+                        {Boolean(currentFournisseurId) && !modeReassignation && !['ANNULEE', 'TERMINEE', 'VALIDEE'].includes(statut) && (
                             <button
                                 type="button"
                                 onClick={() => setModeReassignation(true)}
@@ -228,7 +298,7 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                     </div>
 
                     {/* 1. BLOC ASSIGNATION & SÉLECTION DU PRESTATAIRE */}
-                    {afficherZoneAssignation && !['ANNULEE', 'TERMINÉE', 'TERMINEE'].includes(statut) && (
+                    {afficherZoneAssignation && !['ANNULEE', 'TERMINEE', 'VALIDEE'].includes(statut) && (
                         <div className="p-4 sm:p-5 bg-gradient-to-br from-amber-500/10 to-orange-500/10 border border-amber-500/20 rounded-2xl space-y-4 shadow-inner">
                             <div className="flex justify-between items-center">
                                 <label className="text-xs text-amber-300 font-extrabold flex items-center gap-1.5">
@@ -240,7 +310,6 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                                 )}
                             </div>
 
-                            {/* LISTE DÉROULANTE CONNECTÉE ET SÉCURISÉE */}
                             <div className="flex flex-col sm:flex-row gap-2.5">
                                 <select
                                     value={fournisseurId}
@@ -250,14 +319,13 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                                 >
                                     <option value="">
                                         {loadingFournisseurs
-                                            ? "⏳ Chargement des prestataires..."
+                                            ? "Chargement des prestataires..."
                                             : fournisseurs.length === 0
-                                                ? "⚠️ Aucun prestataire trouvé"
+                                                ? "Aucun prestataire trouvé"
                                                 : "-- Sélectionner un prestataire --"
                                         }
                                     </option>
                                     {fournisseurs.map((f) => {
-                                        // Extraction robuste de l'ID
                                         const id = f.id ?? f.fournisseurId;
                                         if (!id) return null;
 
@@ -277,16 +345,14 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                                     disabled={processing || !fournisseurId || loadingFournisseurs}
                                     className="px-5 py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 disabled:opacity-50 text-slate-950 font-black rounded-xl text-xs transition-all shadow-lg shadow-amber-500/10 flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
                                 >
-                                    {processing ? <Loader2 className="animate-spin" size={16} /> : 'Assigner 🚀'}
+                                    {processing ? <Loader2 className="animate-spin" size={16} /> : 'Assigner'}
                                 </button>
                             </div>
 
-                            {/* APERÇU / INFOS DU PRESTATAIRE SÉLECTIONNÉ */}
                             {prestataireSelectionne && (
-                                <div className="bg-black/50 border border-amber-500/30 p-3 rounded-xl text-xs space-y-1 animate-fadeIn">
+                                <div className="bg-black/50 border border-amber-500/30 p-3 rounded-xl text-xs space-y-1">
                                     <div className="flex justify-between items-center text-amber-300 font-bold">
-                                        <span>👤 {getFournisseurName(prestataireSelectionne)}</span>
-                                        {/* ✅ CORRECTION MAJEURE DU BUG DU "0" : On vérifie que la note est strictement supérieure à 0 */}
+                                        <span>{getFournisseurName(prestataireSelectionne)}</span>
                                         {Number(prestataireSelectionne.note) > 0 && (
                                             <span className="flex items-center gap-1 bg-amber-500/20 px-2 py-0.5 rounded text-[10px]">
                                                 <Star size={10} className="fill-amber-400 text-amber-400" /> {prestataireSelectionne.note}/5
@@ -294,13 +360,12 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                                         )}
                                     </div>
                                     <div className="text-slate-300 flex flex-wrap gap-x-4 gap-y-1 text-[11px] pt-1">
-                                        <span>📞 {prestataireSelectionne.telephone || prestataireSelectionne.User?.telephone || 'Non renseigné'}</span>
-                                        <span>🛠️ {prestataireSelectionne.specialite || 'Spécialité polyvalente'}</span>
+                                        <span>{prestataireSelectionne.telephone || prestataireSelectionne.User?.telephone || 'Non renseigné'}</span>
+                                        <span>{prestataireSelectionne.specialite || 'Spécialité polyvalente'}</span>
                                     </div>
                                 </div>
                             )}
 
-                            {/* CASE À COCHER ACCORD TÉLÉPHONIQUE */}
                             <div className="pt-2 border-t border-amber-500/10">
                                 <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer select-none bg-black/40 p-3 rounded-xl border border-amber-500/20 hover:border-amber-500/40 transition">
                                     <input
@@ -311,10 +376,10 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                                     />
                                     <div className="space-y-0.5">
                                         <span className="flex items-center gap-1.5 text-amber-400 font-extrabold text-xs">
-                                            <PhoneCall size={13} /> Accord téléphonique direct obtenu !
+                                            <PhoneCall size={13} /> Accord téléphonique direct obtenu
                                         </span>
                                         <p className="text-[11px] text-slate-400 leading-tight">
-                                            En cochant ceci, la mission sera <strong className="text-slate-200">validée instantanément</strong> sans attendre la confirmation du prestataire sur son application.
+                                            En cochant ceci, la mission passe directement au statut "Prête à démarrer", sans attendre que le prestataire l'accepte sur son application.
                                         </p>
                                     </div>
                                 </label>
@@ -322,29 +387,29 @@ export default function MissionDetailsModal({ reservation, onClose, onRefresh })
                         </div>
                     )}
 
-                    {/* 2. BLOC FEU VERT (Si en validation) */}
-                    {['EN_VALIDATION_ADMIN', 'EN_ATTENTE_VALIDATION', 'ASSIGNEE'].includes(statut) && (
+                    {/* 2. BLOC FEU VERT — uniquement quand le prestataire a déjà accepté */}
+                    {afficherFeuVert && (
                         <div className="p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl space-y-3">
                             <p className="text-xs text-purple-200 font-medium flex items-center gap-2">
                                 <Check size={16} className="text-purple-400 shrink-0" />
-                                <span>Le prestataire est assigné. Vous pouvez donner l'autorisation officielle de démarrer.</span>
+                                <span>Le prestataire a accepté la mission. Vous pouvez donner l'autorisation officielle de démarrer.</span>
                             </p>
                             <button
                                 onClick={() => handleAction(autoriserDemarrage, reservation.id)}
                                 disabled={processing}
                                 className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs sm:text-sm font-black transition flex items-center justify-center gap-2 shadow-lg shadow-purple-600/25 cursor-pointer"
                             >
-                                {processing ? <Loader2 className="animate-spin" size={16} /> : '🟢 ACCORDER LE FEU VERT D\'INTERVENTION'}
+                                {processing ? <Loader2 className="animate-spin" size={16} /> : "Accorder le feu vert d'intervention"}
                             </button>
                         </div>
                     )}
 
                     {/* 3. BOUTONS ANNULER & FERMER */}
                     <div className="flex gap-3 pt-2">
-                        {!['ANNULEE', 'TERMINÉE', 'TERMINEE', 'VALIDEE'].includes(statut) && (
+                        {!['ANNULEE', 'TERMINEE', 'VALIDEE'].includes(statut) && (
                             <button
                                 type="button"
-                                onClick={() => window.confirm("⚠️ Voulez-vous vraiment annuler définitivement cette mission ?") && handleAction(updateReservationStatut, reservation.id, 'ANNULEE')}
+                                onClick={() => window.confirm("Voulez-vous vraiment annuler définitivement cette mission ?") && handleAction(updateReservationStatut, reservation.id, 'ANNULEE')}
                                 disabled={processing}
                                 className="flex-1 py-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-xl text-xs font-extrabold transition border border-rose-500/20 flex items-center justify-center gap-1.5 cursor-pointer"
                             >

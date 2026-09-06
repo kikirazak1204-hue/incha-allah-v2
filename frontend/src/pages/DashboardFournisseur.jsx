@@ -2,29 +2,13 @@ import React, { useEffect, useState, useRef } from 'react';
 import { getDashboardFournisseur, getProduitsFournisseur, deleteProduit, addProduit } from '../util/api';
 import { useNotification } from '../context/NotificationContext.jsx';
 import SoldeRetrait from '../components/SoldeRetrait';
+import { STATUT, STATUT_FALLBACK, BADGE_PROFIL, STATUTS_TELEPHONE_VISIBLE } from '../constants/statuts';
+import BonInterventionPrint from '../components/BonInterventionPrint';
 
 const API = import.meta.env.VITE_API_URL;
 
-const STATUT = {
-    EN_ATTENTE: { label: 'Nouvelle demande', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20', dot: 'bg-amber-400 shadow-[0_0_8px_#fbbf24]' },
-    EN_VALIDATION_ADMIN: { label: 'En attente de validation Admin', bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', dot: 'bg-blue-400 shadow-[0_0_8px_#60a5fa] animate-pulse' },
-    ACCEPTEE: { label: 'Validée par Admin (Prête)', bg: 'bg-indigo-500/10', text: 'text-indigo-400', border: 'border-indigo-500/20', dot: 'bg-indigo-400 shadow-[0_0_8px_#6366f1]' },
-    EN_PREPARATION: { label: 'Préparation / Matériel', bg: 'bg-orange-500/10', text: 'text-orange-400', border: 'border-orange-500/20', dot: 'bg-orange-400 shadow-[0_0_8px_#fb923c]' },
-    EN_COURS: { label: 'Intervention en cours', bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20', dot: 'bg-purple-400 shadow-[0_0_8px_#c084fc]' },
-    TERMINEE: { label: 'Travaux terminés', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', dot: 'bg-emerald-400 shadow-[0_0_8px_#34d399]' },
-    VALIDEE: { label: 'Clôturée & Validée', bg: 'bg-emerald-500/20', text: 'text-emerald-300', border: 'border-emerald-500/30', dot: 'bg-emerald-400' },
-    ANNULEE: { label: 'Annulée / Refusée', bg: 'bg-rose-500/10', text: 'text-rose-400', border: 'border-rose-500/20', dot: 'bg-rose-400 shadow-[0_0_8px_#fb7185]' },
-};
-
-const BADGE_PROFIL = {
-    EN_ATTENTE: { label: 'En attente de validation', bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20' },
-    EN_EVALUATION: { label: "En cours d'évaluation", bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20' },
-    CONFORME: { label: 'Garanti Kanari Service', bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20' },
-    SUSPENDU: { label: 'Compte suspendu', bg: 'bg-rose-500/10', text: 'text-rose-400', border: 'border-rose-500/20' },
-};
-
 function StatutBadge({ statut }) {
-    const s = STATUT[statut] || { label: statut || 'Inconnu', bg: 'bg-slate-500/10', text: 'text-slate-300', border: 'border-slate-500/20', dot: 'bg-slate-400' };
+    const s = STATUT[statut] || { ...STATUT_FALLBACK, label: statut || 'Inconnu' };
     return (
         <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold tracking-wide border ${s.bg} ${s.text} ${s.border} backdrop-blur-md shadow-sm transition-all`}>
             <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
@@ -33,30 +17,29 @@ function StatutBadge({ statut }) {
     );
 }
 
-function StatCard({ icon, label, value, gradient }) {
+function StatCard({ label, value, gradient }) {
     return (
         <div className="relative overflow-hidden bg-white/[0.02] hover:bg-white/[0.04] p-6 rounded-2xl border border-white/[0.07] hover:border-white/[0.15] transition-all duration-300 group shadow-xl">
             <div className={`absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r ${gradient} opacity-60 group-hover:opacity-100 transition-opacity`} />
-            <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium uppercase tracking-wider text-slate-400 group-hover:text-slate-300 transition-colors">{label}</span>
-                <span className="text-2xl p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.05] shadow-inner">{icon}</span>
-            </div>
+            <span className="text-xs font-medium uppercase tracking-wider text-slate-400 group-hover:text-slate-300 transition-colors block mb-2">{label}</span>
             <p className="text-3xl font-extrabold tracking-tight text-white">{value ?? '—'}</p>
         </div>
     );
 }
 
 // ════════════════════════════════════════════════════════════════
-// MODAL : BON D'INTERVENTION — branché sur la VRAIE route backend
-// POST /api/bons-intervention (crée le bon ET passe la réservation en TERMINEE)
+// MODAL : BON D'INTERVENTION — POST /api/bons-intervention
+// Après envoi réussi : proposition d'impression immédiate du bon transmis.
 // ════════════════════════════════════════════════════════════════
-function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
+function BonInterventionModal({ mission, onClose, token, onSuccess }) {
     const [description, setDescription] = useState('');
     const [montantMainOeuvre, setMontantMainOeuvre] = useState('');
     const [piecesOutils, setPiecesOutils] = useState('');
     const [montantPiecesOutils, setMontantPiecesOutils] = useState('');
     const [loading, setLoading] = useState(false);
     const [erreur, setErreur] = useState('');
+    const [bonEnvoye, setBonEnvoye] = useState(null);
+    const printRef = useRef(null);
 
     const totalFinal = Number(montantMainOeuvre || 0) + Number(montantPiecesOutils || 0);
 
@@ -75,15 +58,11 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
 
         setLoading(true);
         try {
-            // ✅ CORRIGÉ : on parle bien à la vraie route du contrôleur bonInterventionController.js
             const response = await fetch(`${API}/api/bons-intervention`, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify({
-                    reservationId: missionId,
+                    reservationId: mission.id,
                     descriptionTravail: description.trim(),
                     montantMainOeuvre: Number(montantMainOeuvre),
                     piecesOutils: piecesOutils.trim() || null,
@@ -92,9 +71,14 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
             }).then(r => r.json());
 
             if (response.success) {
-                alert("Rapport et bon d'intervention transmis avec succès ! Le client va recevoir une notification pour valider.");
-                onSuccess(missionId, 'TERMINEE');
-                onClose();
+                onSuccess(mission.id, 'TERMINEE');
+                setBonEnvoye({
+                    descriptionTravail: description.trim(),
+                    montantMainOeuvre: Number(montantMainOeuvre),
+                    piecesOutils: piecesOutils.trim() || null,
+                    montantPiecesOutils: Number(montantPiecesOutils || 0),
+                    createdAt: new Date().toISOString(),
+                });
             } else {
                 setErreur(response.message || 'Erreur lors de la validation.');
             }
@@ -106,14 +90,52 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
         }
     };
 
+    const imprimer = () => window.print();
+
+    // Écran de confirmation + impression après envoi réussi
+    if (bonEnvoye) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md print:bg-white">
+                <div className="w-full max-w-lg bg-[#0E1320] border border-emerald-500/30 rounded-3xl shadow-2xl p-6 space-y-5 text-center print:hidden">
+                    <div className="w-14 h-14 mx-auto rounded-full bg-emerald-500/10 border-2 border-emerald-500/30" />
+                    <div>
+                        <h3 className="text-lg font-black text-white">Bon transmis avec succès</h3>
+                        <p className="text-sm text-slate-400 mt-1">Le client va recevoir une notification pour valider la prestation.</p>
+                    </div>
+                    <div className="flex gap-3 pt-2">
+                        <button onClick={imprimer} className="flex-1 py-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold rounded-xl text-xs transition-all">
+                            Imprimer le bon
+                        </button>
+                        <button onClick={onClose} className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 text-slate-950 font-black rounded-xl text-xs shadow-lg transition-all">
+                            Fermer
+                        </button>
+                    </div>
+                </div>
+
+                <BonInterventionPrint
+                    ref={printRef}
+                    type="bon"
+                    numero={`BI-${mission.id}`}
+                    mission={mission}
+                    client={mission.client}
+                    prestataire={mission.prestataire}
+                    description={bonEnvoye.descriptionTravail}
+                    dateDocument={bonEnvoye.createdAt}
+                    lignes={[
+                        { label: "Main d'œuvre", montant: bonEnvoye.montantMainOeuvre },
+                        { label: bonEnvoye.piecesOutils || 'Pièces / matériel', montant: bonEnvoye.montantPiecesOutils },
+                    ]}
+                />
+            </div>
+        );
+    }
+
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <div className="w-full max-w-lg bg-[#0E1320] border border-purple-500/30 rounded-3xl shadow-2xl overflow-hidden flex flex-col p-6 space-y-4 text-slate-100">
                 <div className="flex items-center justify-between border-b border-white/[0.07] pb-3">
-                    <h3 className="text-lg font-black text-white flex items-center gap-2">
-                        📝 Rapport & Bon d'Intervention
-                    </h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors text-lg font-bold">✕</button>
+                    <h3 className="text-lg font-black text-white flex items-center gap-2">Rapport & Bon d'Intervention</h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors text-lg font-bold">×</button>
                 </div>
 
                 {erreur && (
@@ -124,9 +146,7 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
 
                 <form onSubmit={soumettreBon} className="space-y-4 text-left">
                     <div>
-                        <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">
-                            Description des travaux effectués *
-                        </label>
+                        <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">Description des travaux effectués *</label>
                         <textarea
                             value={description}
                             onChange={e => setDescription(e.target.value)}
@@ -138,9 +158,7 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">
-                            Matériaux / Pièces utilisés (Optionnel)
-                        </label>
+                        <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">Matériaux / Pièces utilisés (Optionnel)</label>
                         <input
                             type="text"
                             value={piecesOutils}
@@ -152,9 +170,7 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">
-                                Coût Main d'œuvre (FCFA) *
-                            </label>
+                            <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">Coût Main d'œuvre (FCFA) *</label>
                             <input
                                 type="number"
                                 value={montantMainOeuvre}
@@ -165,9 +181,7 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">
-                                Coût des Pièces (FCFA)
-                            </label>
+                            <label className="block text-xs font-bold text-purple-400 uppercase tracking-wider mb-1.5">Coût des Pièces (FCFA)</label>
                             <input
                                 type="number"
                                 value={montantPiecesOutils}
@@ -184,13 +198,11 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
                     </div>
 
                     <p className="text-xs text-slate-500 leading-relaxed">
-                        ⚠️ Ce bon sera envoyé au client pour validation. Une fois validé, le compte à rebours de 48h pour le dépôt de votre commission démarre automatiquement.
+                        Ce bon sera envoyé au client pour validation. Une fois validé, le compte à rebours de 48h pour le dépôt de votre commission démarre automatiquement.
                     </p>
 
                     <div className="pt-2 flex gap-3">
-                        <button type="button" onClick={onClose} className="flex-1 py-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold rounded-xl text-sm transition-all">
-                            Annuler
-                        </button>
+                        <button type="button" onClick={onClose} className="flex-1 py-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold rounded-xl text-sm transition-all">Annuler</button>
                         <button type="submit" disabled={loading} className="flex-1 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-sm shadow-lg shadow-emerald-500/20 transition-all active:scale-[0.99] disabled:opacity-50">
                             {loading ? 'Transmission...' : 'Envoyer le Bon'}
                         </button>
@@ -202,7 +214,7 @@ function BonInterventionModal({ missionId, onClose, token, onSuccess }) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// MODAL : AJOUTER UN PRODUIT (catégorie, quantité, tous types de fichiers)
+// MODAL : AJOUTER UN PRODUIT
 // ════════════════════════════════════════════════════════════════
 function AjouterProduitModal({ onClose, onSuccess }) {
     const { showNotification } = useNotification();
@@ -218,10 +230,7 @@ function AjouterProduitModal({ onClose, onSuccess }) {
     const soumettre = async (e) => {
         e.preventDefault();
         setError('');
-        if (!nom.trim() || !prix) {
-            setError('Le nom et le prix sont obligatoires.');
-            return;
-        }
+        if (!nom.trim() || !prix) { setError('Le nom et le prix sont obligatoires.'); return; }
         setLoading(true);
         try {
             const fd = new FormData();
@@ -230,17 +239,12 @@ function AjouterProduitModal({ onClose, onSuccess }) {
             fd.append('categorie', categorie.trim());
             fd.append('quantite', quantite || 0);
             fd.append('description', description.trim());
-            // ✅ Clé 'image' : cohérente avec upload.single('image') côté backend
             if (fichier) fd.append('image', fichier);
 
             const res = await addProduit(fd);
             if (res && res.success !== false) {
                 onSuccess(res.data || { id: Date.now(), nom: nom.trim(), prix, categorie: categorie.trim(), quantite });
-                showNotification({
-                    title: 'Produit ajouté',
-                    body: `L'article "${nom.trim()}" a bien été ajouté à votre boutique.`,
-                    categorie: 'Boutique',
-                });
+                showNotification({ title: 'Produit ajouté', body: `L'article "${nom.trim()}" a bien été ajouté à votre boutique.`, categorie: 'Boutique' });
                 onClose();
             } else {
                 setError(res?.message || "Échec de l'ajout du produit.");
@@ -257,61 +261,27 @@ function AjouterProduitModal({ onClose, onSuccess }) {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <div className="w-full max-w-lg bg-[#0E1320] border border-purple-500/30 rounded-3xl p-6 shadow-2xl">
                 <div className="flex justify-between items-center mb-4">
-                    <h3 className="text-lg font-black text-white">📦 Ajouter un produit</h3>
-                    <button onClick={onClose} className="text-slate-400 hover:text-white text-sm font-bold">✕</button>
+                    <h3 className="text-lg font-black text-white"> Ajouter un produit</h3>
+                    <button onClick={onClose} className="text-slate-400 hover:text-white text-sm font-bold">×</button>
                 </div>
 
                 {error && (
-                    <div className="mb-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl p-3 text-rose-300 text-xs font-semibold text-center">
-                        {error}
-                    </div>
+                    <div className="mb-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl p-3 text-rose-300 text-xs font-semibold text-center">{error}</div>
                 )}
 
                 <form onSubmit={soumettre} className="space-y-4">
-                    <input
-                        type="text" placeholder="Nom du produit *"
-                        value={nom} onChange={(e) => setNom(e.target.value)}
-                        className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500"
-                    />
-                    <input
-                        type="number" placeholder="Prix (FCFA) *"
-                        value={prix} onChange={(e) => setPrix(e.target.value)}
-                        className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500"
-                    />
+                    <input type="text" placeholder="Nom du produit *" value={nom} onChange={(e) => setNom(e.target.value)} className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500" />
+                    <input type="number" placeholder="Prix (FCFA) *" value={prix} onChange={(e) => setPrix(e.target.value)} className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500" />
                     <div className="flex gap-2">
-                        <input
-                            type="text" placeholder="Catégorie"
-                            value={categorie} onChange={(e) => setCategorie(e.target.value)}
-                            className="flex-1 bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500"
-                        />
-                        <input
-                            type="number" placeholder="Qté" min="0"
-                            value={quantite} onChange={(e) => setQuantite(e.target.value)}
-                            className="w-24 bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500"
-                        />
+                        <input type="text" placeholder="Catégorie" value={categorie} onChange={(e) => setCategorie(e.target.value)} className="flex-1 bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500" />
+                        <input type="number" placeholder="Qté" min="0" value={quantite} onChange={(e) => setQuantite(e.target.value)} className="w-24 bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500" />
                     </div>
-                    <textarea
-                        placeholder="Description..."
-                        rows="3"
-                        value={description} onChange={(e) => setDescription(e.target.value)}
-                        className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500"
-                    />
+                    <textarea placeholder="Description..." rows="3" value={description} onChange={(e) => setDescription(e.target.value)} className="w-full bg-[#161c2e] text-white p-3 rounded-xl border border-white/10 outline-none focus:border-purple-500" />
                     <div>
-                        <label className="block text-[10px] text-purple-400 font-bold uppercase mb-1">
-                            Photo / fichier (optionnel)
-                        </label>
-                        <input
-                            type="file"
-                            onChange={(e) => setFichier(e.target.files?.[0] || null)}
-                            className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:bg-purple-600 file:text-white file:rounded-xl file:border-0 cursor-pointer"
-                        />
+                        <label className="block text-[10px] text-purple-400 font-bold uppercase mb-1">Photo / fichier (optionnel)</label>
+                        <input type="file" onChange={(e) => setFichier(e.target.files?.[0] || null)} className="w-full text-xs text-slate-400 file:mr-3 file:py-2 file:px-4 file:bg-purple-600 file:text-white file:rounded-xl file:border-0 cursor-pointer" />
                     </div>
-
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all disabled:opacity-50"
-                    >
+                    <button type="submit" disabled={loading} className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 transition-all disabled:opacity-50">
                         {loading ? 'Traitement...' : 'Ajouter au catalogue'}
                     </button>
                 </form>
@@ -321,7 +291,7 @@ function AjouterProduitModal({ onClose, onSuccess }) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// MODAL : MESSAGERIE CLIENT (vraie API /api/messages, pas un mock)
+// MODAL : MESSAGERIE CLIENT
 // ════════════════════════════════════════════════════════════════
 function ChatModal({ mission, userId, onClose }) {
     const [messages, setMessages] = useState([]);
@@ -357,7 +327,7 @@ function ChatModal({ mission, userId, onClose }) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
             <div className="w-full max-w-lg bg-[#0E1320] border border-purple-500/20 rounded-3xl shadow-2xl flex flex-col overflow-hidden h-[550px]">
                 <div className="flex items-center justify-between px-6 py-4 bg-white/[0.02] border-b border-white/[0.07]">
                     <div className="flex items-center gap-3">
@@ -369,16 +339,14 @@ function ChatModal({ mission, userId, onClose }) {
                             <p className="text-purple-400/80 text-xs font-medium">Mission #{mission.id}</p>
                         </div>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-slate-400 hover:text-white transition-colors text-sm">✕</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/[0.05] hover:bg-white/[0.1] flex items-center justify-center text-slate-400 hover:text-white transition-colors text-sm">×</button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
                     {init ? (
                         <div className="flex justify-center items-center h-full"><p className="text-slate-500 text-sm animate-pulse">Chargement de la conversation...</p></div>
                     ) : messages.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-2">
-                            <p className="text-sm font-medium">Aucun message. Lancez la discussion !</p>
-                        </div>
+                        <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-2"><p className="text-sm font-medium">Aucun message. Lancez la discussion !</p></div>
                     ) : (
                         messages.map(msg => {
                             const moi = msg.senderId === userId;
@@ -418,7 +386,7 @@ function ChatModal({ mission, userId, onClose }) {
 }
 
 // ════════════════════════════════════════════════════════════════
-// ONGLET : AO & DEVIS (vraies API /api/reservations/disponibles, /api/devis)
+// ONGLET : AO & DEVIS — avec impression du devis accepté
 // ════════════════════════════════════════════════════════════════
 function OngletDevis({ token }) {
     const [reservations, setReservations] = useState([]);
@@ -430,6 +398,8 @@ function OngletDevis({ token }) {
     const [sending, setSending] = useState(null);
     const [photos, setPhotos] = useState({});
     const [uploadLoading, setUploadLoading] = useState(null);
+    const [devisAImprimer, setDevisAImprimer] = useState(null);
+    const printRef = useRef(null);
 
     const charger = async () => {
         try {
@@ -444,6 +414,14 @@ function OngletDevis({ token }) {
     };
 
     useEffect(() => { charger(); }, []);
+
+    // Impression déclenchée après mise à jour du devis à imprimer (le DOM doit être prêt)
+    useEffect(() => {
+        if (devisAImprimer) {
+            const t = setTimeout(() => window.print(), 150);
+            return () => clearTimeout(t);
+        }
+    }, [devisAImprimer]);
 
     const envoyerDevis = async (reservationId) => {
         if (!montant[reservationId]) { alert('Entrez un montant'); return; }
@@ -467,11 +445,7 @@ function OngletDevis({ token }) {
         const fd = new FormData();
         fd.append(type, file);
         try {
-            const r = await fetch(`${API}/api/missions/${missionId}/photos`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${token}` },
-                body: fd
-            }).then(r => r.json());
+            const r = await fetch(`${API}/api/missions/${missionId}/photos`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }).then(r => r.json());
             if (r.success) alert('Photo envoyée !');
             else alert(r.message || 'Erreur');
         } catch { alert('Erreur'); }
@@ -487,13 +461,10 @@ function OngletDevis({ token }) {
 
     return (
         <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.01] p-2 rounded-2xl border border-white/[0.05]">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.01] p-2 rounded-2xl border border-white/[0.05] print:hidden">
                 <div className="flex gap-1 p-1 bg-[#070A12] rounded-xl border border-white/[0.05]">
                     {[['disponibles', 'Demandes disponibles'], ['mesdevis', 'Mes devis envoyés']].map(([id, label]) => (
-                        <button
-                            key={id}
-                            onClick={() => setActiveSubTab(id)}
-                            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeSubTab === id ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/[0.02]'}`}>
+                        <button key={id} onClick={() => setActiveSubTab(id)} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeSubTab === id ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-white/[0.02]'}`}>
                             {label}
                         </button>
                     ))}
@@ -501,7 +472,7 @@ function OngletDevis({ token }) {
             </div>
 
             {activeSubTab === 'disponibles' && (
-                <div className="space-y-4">
+                <div className="space-y-4 print:hidden">
                     {reservations.length === 0 ? (
                         <div className="text-center py-16 bg-white/[0.01] border border-white/[0.05] rounded-3xl text-slate-500 space-y-3">
                             <p className="text-sm font-medium">Aucune nouvelle demande d'intervention dans votre secteur.</p>
@@ -527,7 +498,7 @@ function OngletDevis({ token }) {
                                     {[
                                         ['Lieu', res.adresseIntervention || res.adresse],
                                         ['Date ciblée', res.dateSouhaitee ? new Date(res.dateSouhaitee).toLocaleDateString('fr-FR') : 'Dès que possible'],
-                                        ['Contact', '📞 Numéro masqué'],
+                                        ['Contact', 'Numéro masqué'],
                                     ].map(([label, val]) => val ? (
                                         <div key={label} className="bg-[#070A12]/60 rounded-2xl p-3.5 border border-white/[0.04]">
                                             <p className="text-slate-500 text-[10px] uppercase font-bold tracking-wider mb-1">{label}</p>
@@ -581,7 +552,7 @@ function OngletDevis({ token }) {
             )}
 
             {activeSubTab === 'mesdevis' && (
-                <div className="space-y-4">
+                <div className="space-y-4 print:hidden">
                     {mesDevis.length === 0 ? (
                         <div className="text-center py-16 bg-white/[0.01] border border-white/[0.05] rounded-3xl text-slate-500 space-y-2 text-left">
                             <p className="text-sm font-medium">Aucun devis émis pour le moment.</p>
@@ -605,9 +576,7 @@ function OngletDevis({ token }) {
                                         </div>
                                         <h4 className="text-lg font-bold text-white mt-0.5">{res?.clientNom || 'Client'}</h4>
                                     </div>
-                                    <span className={`px-3.5 py-1 rounded-full text-xs font-bold border ${statutDevis.color}`}>
-                                        {statutDevis.label}
-                                    </span>
+                                    <span className={`px-3.5 py-1 rounded-full text-xs font-bold border ${statutDevis.color}`}>{statutDevis.label}</span>
                                 </div>
 
                                 <div className="flex justify-between items-center bg-[#070A12]/80 rounded-2xl px-5 py-3.5 border border-white/[0.04]">
@@ -621,16 +590,16 @@ function OngletDevis({ token }) {
 
                                 {devis.statut === 'ACCEPTE' && (
                                     <div className="bg-purple-950/10 border border-purple-500/20 rounded-2xl p-4 space-y-3">
-                                        <span className="text-xs font-bold text-purple-300 uppercase tracking-wider flex items-center gap-1.5">
-                                            Justificatifs d'intervention requis
-                                        </span>
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">Justificatifs d'intervention requis</span>
+                                            <button onClick={() => setDevisAImprimer(devis)} className="text-xs font-bold text-purple-300 hover:text-white underline">Imprimer le devis</button>
+                                        </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                             {['photoAvant', 'photoApres'].map(type => (
                                                 <div key={type} className="flex items-center gap-2 bg-[#070A12] p-2 rounded-xl border border-white/[0.05]">
                                                     <label className="flex-1 flex items-center gap-2 px-3 py-1.5 cursor-pointer truncate">
                                                         <span className="text-xs font-medium text-slate-300">{type === 'photoAvant' ? 'État initial' : 'Résultat final'}</span>
-                                                        <input type="file" accept="image/*" className="hidden"
-                                                            onChange={e => setPhotos(p => ({ ...p, [`${res?.id}_${type}`]: e.target.files[0] }))} />
+                                                        <input type="file" accept="image/*" className="hidden" onChange={e => setPhotos(p => ({ ...p, [`${res?.id}_${type}`]: e.target.files[0] }))} />
                                                         {photos[`${res?.id}_${type}`] && <span className="text-[10px] text-emerald-400 font-bold ml-auto bg-emerald-500/10 px-2 py-0.5 rounded">Prêt</span>}
                                                     </label>
                                                     <button
@@ -649,6 +618,19 @@ function OngletDevis({ token }) {
                     })}
                 </div>
             )}
+
+            {devisAImprimer && (
+                <BonInterventionPrint
+                    ref={printRef}
+                    type="devis"
+                    numero={`DEV-${devisAImprimer.id}`}
+                    mission={devisAImprimer.reservationDevis}
+                    client={{ nom: devisAImprimer.reservationDevis?.clientNom }}
+                    description={devisAImprimer.description}
+                    dateDocument={devisAImprimer.createdAt}
+                    lignes={[{ label: 'Prestation proposée', montant: devisAImprimer.montant }]}
+                />
+            )}
         </div>
     );
 }
@@ -666,7 +648,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
     const [actionLoad, setActionLoad] = useState(null);
     const [menuOuvert, setMenuOuvert] = useState(false);
     const [chatMission, setChatMission] = useState(null);
-    const [bonInterventionId, setBonInterventionId] = useState(null);
+    const [bonMission, setBonMission] = useState(null);
     const [ajoutProduitOuvert, setAjoutProduitOuvert] = useState(false);
     const token = localStorage.getItem('token');
 
@@ -676,10 +658,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
     const chargerDonnees = async () => {
         if (!token) return;
         try {
-            const [dash, prods] = await Promise.all([
-                getDashboardFournisseur(),
-                getProduitsFournisseur()
-            ]);
+            const [dash, prods] = await Promise.all([getDashboardFournisseur(), getProduitsFournisseur()]);
             if (!dash.success) throw new Error(dash.message);
             setData(dash.data);
             setMissions(dash.data.missions || []);
@@ -702,11 +681,11 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
                 body: JSON.stringify(body)
             });
-            const data = await r.json().catch(() => ({}));
-            if (r.ok && data.success !== false) {
+            const resData = await r.json().catch(() => ({}));
+            if (r.ok && resData.success !== false) {
                 setMissions(p => p.map(m => m.id === id ? { ...m, statut: nextStatut, ...body } : m));
             } else {
-                alert(data.message || `Erreur (${r.status})`);
+                alert(resData.message || `Erreur (${r.status})`);
             }
         } catch {
             alert('Erreur serveur');
@@ -726,10 +705,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
         alert('Kanari Service a été notifié.');
     };
 
-    if (!token) {
-        setCurrentView && setCurrentView('login');
-        return null;
-    }
+    if (!token) { setCurrentView && setCurrentView('login'); return null; }
 
     if (loading) return (
         <div className="flex items-center justify-center h-screen bg-[#0B0F19] text-white">
@@ -753,26 +729,27 @@ export default function DashboardFournisseur({ setCurrentView }) {
     );
 
     const { profil, stats, commandesRecentes = [] } = data || {};
+    // CORRIGÉ : utilise le même ensemble de statuts actifs que le badge partagé,
+    // 'ASSIGNEE' est désormais bien reconnu partout (avant : mission bloquée visuellement).
     const missionsActives = missions.filter(m => !['TERMINEE', 'VALIDEE', 'ANNULEE'].includes(m.statut));
     const badgeProfil = BADGE_PROFIL[profil?.statutKanari] || BADGE_PROFIL.EN_ATTENTE;
 
     const tabs = [
-        { id: 'overview', label: 'Vue d\'ensemble', icon: '📊' },
-        { id: 'devis', label: 'AO & Devis', icon: '📝' },
-        { id: 'missions', label: 'Interventions', icon: '🔧', badge: missionsActives.length },
-        { id: 'commandes', label: 'Commandes Shop', icon: '🛍️' },
-        { id: 'produits', label: 'Catalogue', icon: '📦' },
-        { id: 'solde', label: 'Portefeuille', icon: '💼' },
-        { id: 'profil', label: 'Fiche Établissement', icon: '🏢' },
+        { id: 'overview', label: 'Vue d\'ensemble', icon: '' },
+        { id: 'devis', label: 'AO & Devis', icon: '' },
+        { id: 'missions', label: 'Interventions', icon: '', badge: missionsActives.length },
+        { id: 'commandes', label: 'Commandes Shop', icon: '' },
+        { id: 'produits', label: 'Catalogue', icon: '' },
+        { id: 'solde', label: 'Portefeuille', icon: '' },
+        { id: 'profil', label: 'Fiche Établissement', icon: '' },
     ];
 
     return (
-        <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex relative overflow-hidden font-sans selection:bg-purple-500 selection:text-white">
-            <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[140px]/[0.1] pointer-events-none" />
-            <div className="absolute bottom-0 right-10 w-[400px] h-[400px] bg-blue-600/10 rounded-full blur-[120px]/[0.1] pointer-events-none" />
+        <div className="min-h-screen bg-[#0B0F19] text-slate-100 flex relative overflow-hidden font-sans selection:bg-purple-500 selection:text-white print:bg-white">
+            <div className="absolute top-0 left-1/4 w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[140px] pointer-events-none print:hidden" />
+            <div className="absolute bottom-0 right-10 w-[400px] h-[400px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none print:hidden" />
 
-            {/* Sidebar Desktop */}
-            <aside className="hidden md:flex w-72 bg-[#0E1320]/80 backdrop-blur-2xl p-6 flex-col gap-4 border-r border-white/[0.05] z-20 shadow-2xl text-left">
+            <aside className="hidden md:flex w-72 bg-[#0E1320]/80 backdrop-blur-2xl p-6 flex-col gap-4 border-r border-white/[0.05] z-20 shadow-2xl text-left print:hidden">
                 <div className="flex items-center gap-3 px-2 pt-2">
                     <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-purple-500/30">
                         <span className="font-black text-white text-base">K</span>
@@ -790,7 +767,6 @@ export default function DashboardFournisseur({ setCurrentView }) {
                     {tabs.map(t => (
                         <button key={t.id} onClick={() => setActiveTab(t.id)} className={`text-left px-3.5 py-3 rounded-2xl text-xs font-bold transition-all flex items-center justify-between group ${activeTab === t.id ? 'bg-gradient-to-r from-purple-600/20 to-indigo-600/10 border border-purple-500/30 text-white shadow-lg' : 'hover:bg-white/[0.03] text-slate-400 hover:text-slate-200 border border-transparent'}`}>
                             <div className="flex items-center gap-3 text-left">
-                                <span className="text-sm">{t.icon}</span>
                                 <span>{t.label}</span>
                             </div>
                             {t.badge > 0 && <span className="bg-purple-500 text-white text-[10px] px-2 py-0.5 rounded-full font-black">{t.badge}</span>}
@@ -799,48 +775,43 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 </nav>
             </aside>
 
-            {/* Mobile Nav Header */}
-            <div className="md:hidden fixed top-0 inset-x-0 h-14 bg-[#0E1320]/90 backdrop-blur-lg border-b border-white/[0.05] z-30 px-4 flex justify-between items-center">
+            <div className="md:hidden fixed top-0 inset-x-0 h-14 bg-[#0E1320]/90 backdrop-blur-lg border-b border-white/[0.05] z-30 px-4 flex justify-between items-center print:hidden">
                 <div className="flex items-center gap-2">
-                    <button onClick={() => window.history.back()} className="text-slate-400 hover:text-white text-lg mr-1">←</button>
+                    <button onClick={() => window.history.back()} className="text-slate-400 hover:text-white text-lg mr-1">‹</button>
                     <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-purple-600 to-indigo-600 flex items-center justify-center font-black text-white text-xs">K</div>
                     <span className="font-extrabold text-sm tracking-tight text-white">Kanari Portal</span>
                 </div>
-                <button onClick={() => setMenuOuvert(!menuOuvert)} className="px-3 py-1.5 rounded-xl bg-white/[0.05] text-slate-300 font-bold text-xs">{menuOuvert ? 'Fermer ✕' : 'Menu ☰'}</button>
+                <button onClick={() => setMenuOuvert(!menuOuvert)} className="px-3 py-1.5 rounded-xl bg-white/[0.05] text-slate-300 font-bold text-xs">{menuOuvert ? 'Fermer' : 'Menu'}</button>
             </div>
 
-            {/* Mobile Menu Overlay */}
             {menuOuvert && (
-                <div className="md:hidden fixed inset-x-0 top-14 bottom-0 z-40 bg-[#0B0F19]/95 backdrop-blur-2xl border-b border-white/[0.05] p-6 space-y-2 overflow-y-auto animate-fadeIn">
+                <div className="md:hidden fixed inset-x-0 top-14 bottom-0 z-40 bg-[#0B0F19]/95 backdrop-blur-2xl border-b border-white/[0.05] p-6 space-y-2 overflow-y-auto print:hidden">
                     <p className="text-xs font-bold text-purple-400 uppercase tracking-wider mb-3 text-left">Menu Principal</p>
                     {tabs.map(t => (
                         <button key={t.id} onClick={() => { setActiveTab(t.id); setMenuOuvert(false); }} className={`w-full text-left px-4 py-3.5 rounded-2xl text-sm font-bold flex items-center justify-between ${activeTab === t.id ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-lg' : 'text-slate-300 bg-white/[0.02]'}`}>
-                            <div className="flex items-center gap-3"><span className="text-lg">{t.icon}</span><span>{t.label}</span></div>
+                            <div className="flex items-center gap-3"><span>{t.label}</span></div>
                             {t.badge > 0 && <span className="bg-rose-500 text-white text-xs px-2.5 py-0.5 rounded-full font-black">{t.badge}</span>}
                         </button>
                     ))}
                 </div>
             )}
 
-            {/* Main Content Area */}
-            <main className="flex-1 p-6 md:p-10 overflow-y-auto mt-14 md:mt-0 max-w-7xl mx-auto z-10 space-y-8">
+            <main className="flex-1 p-6 md:p-10 overflow-y-auto mt-14 md:mt-0 max-w-7xl mx-auto z-10 space-y-8 print:hidden">
                 <header className="hidden md:flex items-center justify-between pb-4 border-b border-white/[0.05]">
                     <div className="text-left">
                         <span className="text-xs font-bold uppercase tracking-widest text-purple-400">Espace de gestion</span>
                         <h1 className="text-2xl font-black text-white mt-0.5">{tabs.find(t => t.id === activeTab)?.label}</h1>
                     </div>
-                    <button onClick={() => window.history.back()} className="px-4 py-2 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold text-xs flex items-center gap-2 transition-all">
-                        ← Retour
-                    </button>
+                    <button onClick={() => window.history.back()} className="px-4 py-2 rounded-2xl bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold text-xs flex items-center gap-2 transition-all">Retour</button>
                 </header>
 
                 {activeTab === 'overview' && (
-                    <section className="space-y-6 animate-fadeIn">
+                    <section className="space-y-6">
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                            <StatCard icon="🔧" label="Missions actives" value={missionsActives.length} gradient="from-purple-600 to-blue-500" />
-                            <StatCard icon="✅" label="Missions traitées" value={stats?.totalMissions ?? 0} gradient="from-purple-500 to-pink-500" />
-                            <StatCard icon="🛍️" label="Ventes directes" value={stats?.totalCommandes ?? 0} gradient="from-blue-500 to-cyan-500" />
-                            <StatCard icon="💰" label="Chiffre d'affaires" value={`${stats?.totalRevenus?.toLocaleString() ?? 0} F`} gradient="from-emerald-400 to-teal-500" />
+                            <StatCard label="Missions actives" value={missionsActives.length} gradient="from-purple-600 to-blue-500" />
+                            <StatCard label="Missions traitées" value={stats?.totalMissions ?? 0} gradient="from-purple-500 to-pink-500" />
+                            <StatCard label="Ventes directes" value={stats?.totalCommandes ?? 0} gradient="from-blue-500 to-cyan-500" />
+                            <StatCard label="Chiffre d'affaires" value={`${stats?.totalRevenus?.toLocaleString() ?? 0} F`} gradient="from-emerald-400 to-teal-500" />
                         </div>
 
                         {missionsActives.length > 0 && (
@@ -874,7 +845,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 {activeTab === 'devis' && <OngletDevis token={token} />}
 
                 {activeTab === 'missions' && (
-                    <section className="space-y-6 animate-fadeIn text-left">
+                    <section className="space-y-6 text-left">
                         <div className="flex items-center justify-between pb-2 border-b border-white/[0.05]">
                             <h2 className="text-xl font-black text-white">Suivi de vos Interventions</h2>
                             <span className="px-3 py-1.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400 text-xs font-bold">
@@ -901,21 +872,18 @@ export default function DashboardFournisseur({ setCurrentView }) {
                                                     <span className="text-xs font-medium text-slate-400">{mission.serviceNom || mission.service?.nom || 'Prestation de service'}</span>
                                                 </div>
                                                 <h3 className="font-extrabold text-2xl text-white mt-1">{mission.client?.nom || mission.clientNom || 'Client'}</h3>
-
                                                 <p className="text-xs text-slate-400 font-medium mt-1">
-                                                    Téléphone : {' '}
-                                                    <span className={`font-bold ${['ACCEPTEE', 'EN_PREPARATION', 'EN_COURS', 'TERMINEE', 'VALIDEE'].includes(mission.statut) ? 'text-amber-400' : 'text-slate-500'}`}>
-                                                        {['ACCEPTEE', 'EN_PREPARATION', 'EN_COURS', 'TERMINEE', 'VALIDEE'].includes(mission.statut)
+                                                    Téléphone :{' '}
+                                                    <span className={`font-bold ${STATUTS_TELEPHONE_VISIBLE.includes(mission.statut) ? 'text-amber-400' : 'text-slate-500'}`}>
+                                                        {STATUTS_TELEPHONE_VISIBLE.includes(mission.statut)
                                                             ? (mission.client?.telephone || mission.telephone || 'Non spécifié')
-                                                            : '📞 Numéro masqué (Disponible après validation par l\'Admin)'}
+                                                            : "Numéro masqué (Disponible après validation par l'Admin)"}
                                                     </span>
                                                 </p>
                                             </div>
 
                                             <div className="flex items-center gap-3">
-                                                <button onClick={() => setChatMission(mission)} className="px-4 py-2 rounded-2xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 font-bold text-xs flex items-center gap-2 transition-all">
-                                                    💬 Messagerie Client
-                                                </button>
+                                                <button onClick={() => setChatMission(mission)} className="px-4 py-2 rounded-2xl bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 text-purple-300 font-bold text-xs flex items-center gap-2 transition-all">Messagerie Client</button>
                                                 <StatutBadge statut={mission.statut} />
                                             </div>
                                         </div>
@@ -944,10 +912,10 @@ export default function DashboardFournisseur({ setCurrentView }) {
                                             {['EN_ATTENTE', 'ASSIGNEE'].includes(mission.statut) && (
                                                 <>
                                                     <button onClick={() => callAction(mission.id, 'accepter', 'EN_VALIDATION_ADMIN')} disabled={actionLoad === `${mission.id}_accepter`} className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-xs shadow-lg transition-all active:scale-95 disabled:opacity-50">
-                                                        {actionLoad === `${mission.id}_accepter` ? 'Traitement...' : '👍 Je suis partant — Envoyer à l\'Admin'}
+                                                        {actionLoad === `${mission.id}_accepter` ? 'Traitement...' : "Je suis partant — Envoyer à l'Admin"}
                                                     </button>
                                                     <button onClick={() => callAction(mission.id, 'refuser', 'ANNULEE')} disabled={actionLoad === `${mission.id}_refuser`} className="px-6 py-3 bg-white/[0.04] hover:bg-rose-500/20 text-rose-400 border border-transparent hover:border-rose-500/30 font-bold rounded-xl text-xs transition-all active:scale-95 disabled:opacity-50">
-                                                        {actionLoad === `${mission.id}_refuser` ? 'Refus...' : '👎 Je ne suis pas disponible'}
+                                                        {actionLoad === `${mission.id}_refuser` ? 'Refus...' : 'Je ne suis pas disponible'}
                                                     </button>
                                                 </>
                                             )}
@@ -955,38 +923,36 @@ export default function DashboardFournisseur({ setCurrentView }) {
                                             {mission.statut === 'EN_VALIDATION_ADMIN' && (
                                                 <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-4 flex items-center gap-3 w-full">
                                                     <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                                                    <p className="text-blue-300 font-bold text-xs tracking-wide uppercase">🔒 Transmission effectuée — En attente d'approbation de l'administration</p>
+                                                    <p className="text-blue-300 font-bold text-xs tracking-wide uppercase">Transmission effectuée — En attente d'approbation de l'administration</p>
                                                 </div>
                                             )}
 
                                             {mission.statut === 'ACCEPTEE' && (
                                                 <button onClick={() => callAction(mission.id, 'demarrer', 'EN_COURS')} disabled={actionLoad === `${mission.id}_demarrer`} className="px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-extrabold rounded-xl text-xs shadow-lg transition-all active:scale-95 disabled:opacity-50">
-                                                    {actionLoad === `${mission.id}_demarrer` ? 'Démarrage...' : '🚀 Démarrer l\'intervention'}
+                                                    {actionLoad === `${mission.id}_demarrer` ? 'Démarrage...' : "Démarrer l'intervention"}
                                                 </button>
                                             )}
 
                                             {mission.statut === 'EN_COURS' && (
                                                 <>
-                                                    <button onClick={() => setBonInterventionId(mission.id)} className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-xs shadow-lg transition-all active:scale-95">
-                                                        📝 Remplir le Bon d'intervention & Terminer
+                                                    <button onClick={() => setBonMission(mission)} className="px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black rounded-xl text-xs shadow-lg transition-all active:scale-95">
+                                                        Remplir le Bon d'intervention & Terminer
                                                     </button>
-                                                    <button onClick={() => signalerMateriel(mission.id)} className="px-4 py-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold rounded-xl text-xs transition-all">
-                                                        ⚠️ Signaler matériel manquant
-                                                    </button>
+                                                    <button onClick={() => signalerMateriel(mission.id)} className="px-4 py-3 bg-white/[0.04] hover:bg-white/[0.08] text-slate-300 font-bold rounded-xl text-xs transition-all">Signaler matériel manquant</button>
                                                 </>
                                             )}
 
                                             {mission.statut === 'EN_PREPARATION' && (
                                                 <div className="bg-orange-500/10 border border-orange-500/20 rounded-2xl p-4 flex items-center gap-3 w-full">
                                                     <span className="w-2 h-2 rounded-full bg-orange-400 animate-pulse" />
-                                                    <p className="text-orange-300 font-bold text-xs tracking-wide uppercase">🧰 Matériel manquant signalé — Reprise dès réception</p>
+                                                    <p className="text-orange-300 font-bold text-xs tracking-wide uppercase">Matériel manquant signalé — Reprise dès réception</p>
                                                 </div>
                                             )}
 
                                             {mission.statut === 'TERMINEE' && (
                                                 <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-4 flex items-center gap-3 w-full">
                                                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                                                    <p className="text-emerald-300 font-bold text-xs tracking-wide uppercase">✅ Bon envoyé — En attente de validation du client</p>
+                                                    <p className="text-emerald-300 font-bold text-xs tracking-wide uppercase">Bon envoyé — En attente de validation du client</p>
                                                 </div>
                                             )}
                                         </div>
@@ -998,7 +964,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 )}
 
                 {activeTab === 'commandes' && (
-                    <section className="space-y-6 animate-fadeIn text-left">
+                    <section className="space-y-6 text-left">
                         <div className="bg-white/[0.01] p-6 rounded-3xl border border-white/[0.05]">
                             <h2 className="text-2xl font-black text-white">Commandes de la Boutique</h2>
                             <p className="text-slate-400 text-xs mt-1">Achats directs passés sur votre vitrine Kanari</p>
@@ -1032,16 +998,13 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 )}
 
                 {activeTab === 'produits' && (
-                    <section className="space-y-6 animate-fadeIn text-left">
+                    <section className="space-y-6 text-left">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/[0.01] p-6 rounded-3xl border border-white/[0.05]">
                             <div>
                                 <h2 className="text-2xl font-black text-white">Gestion du Catalogue</h2>
                                 <p className="text-slate-400 text-xs mt-1">Gérez vos produits en vente directe</p>
                             </div>
-                            <button
-                                onClick={() => setAjoutProduitOuvert(true)}
-                                className="px-5 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-black shadow-lg shadow-purple-500/20 transition-all active:scale-95"
-                            >
+                            <button onClick={() => setAjoutProduitOuvert(true)} className="px-5 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-black shadow-lg shadow-purple-500/20 transition-all active:scale-95">
                                 + Ajouter un produit
                             </button>
                         </div>
@@ -1059,10 +1022,10 @@ export default function DashboardFournisseur({ setCurrentView }) {
                                                     src={`${API}/uploads/${p.image}`}
                                                     alt={p.nom}
                                                     className="w-full h-full object-cover"
-                                                    onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.innerHTML = '<span class="text-3xl">📦</span>'; }}
+                                                    onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.style.display = 'none'; e.currentTarget.parentElement.innerHTML = '<span class="text-3xl"></span>'; }}
                                                 />
                                             ) : (
-                                                <span className="text-3xl">📦</span>
+                                                <span className="text-3xl"></span>
                                             )}
                                         </div>
                                         <div className="p-5 flex flex-col justify-between space-y-4 flex-1">
@@ -1083,7 +1046,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 )}
 
                 {activeTab === 'solde' && (
-                    <section className="space-y-6 animate-fadeIn text-left">
+                    <section className="space-y-6 text-left">
                         <div className="bg-white/[0.01] p-6 rounded-3xl border border-white/[0.05]">
                             <h2 className="text-2xl font-black text-white">Flux Financiers</h2>
                             <p className="text-slate-400 text-xs mt-1">Gérez vos encaissements et demandez vos virements</p>
@@ -1095,7 +1058,7 @@ export default function DashboardFournisseur({ setCurrentView }) {
                 )}
 
                 {activeTab === 'profil' && (
-                    <section className="space-y-6 animate-fadeIn text-left">
+                    <section className="space-y-6 text-left">
                         <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-6 md:p-8 shadow-2xl max-w-2xl">
                             <h2 className="text-xl font-black text-white border-b border-white/[0.05] pb-3">Informations de l'Établissement</h2>
                             <div className="divide-y divide-white/[0.05] pt-2">
@@ -1122,20 +1085,17 @@ export default function DashboardFournisseur({ setCurrentView }) {
 
             {chatMission && <ChatModal mission={chatMission} userId={currentUser.id} onClose={() => setChatMission(null)} />}
 
-            {bonInterventionId && (
+            {bonMission && (
                 <BonInterventionModal
-                    missionId={bonInterventionId}
+                    mission={bonMission}
                     token={token}
-                    onClose={() => setBonInterventionId(null)}
+                    onClose={() => setBonMission(null)}
                     onSuccess={handlerActionSuccess}
                 />
             )}
 
             {ajoutProduitOuvert && (
-                <AjouterProduitModal
-                    onClose={() => setAjoutProduitOuvert(false)}
-                    onSuccess={(nouveauProduit) => setProduits(prev => [nouveauProduit, ...prev])}
-                />
+                <AjouterProduitModal onClose={() => setAjoutProduitOuvert(false)} onSuccess={(nouveauProduit) => setProduits(prev => [nouveauProduit, ...prev])} />
             )}
         </div>
     );

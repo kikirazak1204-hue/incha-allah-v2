@@ -7,14 +7,14 @@ import ProduitsAdmin from '../components/admin/ProduitsAdmin';
 import ReservationsAdmin from '../components/admin/ReservationsAdmin';
 
 export default function AdminDashboard() {
-  const [tab, setTab] = useState('validations');
+  const [tab, setTab] = useState('reservations');
 
   const menuItems = [
-    { id: 'validations', label: '🔍 Validations', color: 'from-blue-600 to-cyan-500' },
-    { id: 'utilisateurs', label: '👥 Utilisateurs', color: 'from-purple-600 to-indigo-500' },
-    { id: 'paiements', label: '💳 Paiements', color: 'from-emerald-600 to-teal-500' },
-    { id: 'produits', label: '📦 Produits', color: 'from-orange-600 to-red-500' },
-    { id: 'reservations', label: '🎫 Réservations', color: 'from-pink-600 to-rose-500' },
+    { id: 'reservations', label: 'Missions', color: 'from-pink-600 to-rose-500' },
+    { id: 'validations', label: 'Validations', color: 'from-blue-600 to-cyan-500' },
+    { id: 'utilisateurs', label: 'Utilisateurs', color: 'from-purple-600 to-indigo-500' },
+    { id: 'paiements', label: 'Paiements', color: 'from-emerald-600 to-teal-500' },
+    { id: 'produits', label: 'Produits', color: 'from-orange-600 to-red-500' },
   ];
 
   return (
@@ -25,7 +25,7 @@ export default function AdminDashboard() {
           <h1 className="text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
             PANEL ADMIN
           </h1>
-          <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Incha-Allah v2</p>
+          <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Kanari Service</p>
         </div>
 
         <nav className="space-y-2 flex-1">
@@ -49,9 +49,9 @@ export default function AdminDashboard() {
               localStorage.clear();
               window.location.href = '/';
             }}
-            className="w-full p-3 text-sm text-red-400 hover:bg-red-500/10 rounded-xl transition-colors flex items-center gap-2"
+            className="w-full p-3 text-sm text-red-400 hover:bg-red-500/10 rounded-xl transition-colors"
           >
-            🚀 Quitter l'Admin
+            Quitter l'Admin
           </button>
         </div>
       </aside>
@@ -64,11 +64,11 @@ export default function AdminDashboard() {
         </header>
 
         <div className="bg-white/5 p-1 rounded-2xl">
+          {tab === 'reservations' && <ReservationsAdmin />}
           {tab === 'validations' && <ValidationsAdmin />}
           {tab === 'utilisateurs' && <UtilisateursAdmin />}
           {tab === 'paiements' && <PaiementAdmin />}
           {tab === 'produits' && <ProduitsAdmin />}
-          {tab === 'reservations' && <ReservationsAdmin />}
         </div>
       </main>
     </div>

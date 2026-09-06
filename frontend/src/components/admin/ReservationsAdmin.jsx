@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { getAdminReservations } from '../../util/api';
-import { Loader2, AlertCircle, Plus } from 'lucide-react';
-// 🟢 La bonne syntaxe pour remonter dans le dossier parent "components"
+import { Loader2, AlertCircle, Plus, RefreshCw } from 'lucide-react';
 import StatusBadge from "../StatusBadge";
 import CreateMissionModal from "../CreateMissionModal";
 import MissionDetailsModal from "../MissionDetailsModal";
@@ -40,24 +39,24 @@ export default function ReservationsAdmin() {
                     <p className="text-slate-400 text-sm">Supervision en temps réel des interventions et de la double validation</p>
                 </div>
                 <div className="flex gap-3">
-                    <button 
+                    <button
                         onClick={() => setShowCreateModal(true)}
                         className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 rounded-2xl text-xs font-bold text-white transition flex items-center gap-2 shadow-lg shadow-purple-600/20 active:scale-95"
                     >
-                        <Plus size={14}/> Créer une Mission
+                        <Plus size={14} /> Créer une Mission
                     </button>
-                    <button 
-                        onClick={loadData} 
-                        className="px-5 py-2.5 bg-white/5 hover:bg-white/10 rounded-2xl text-xs font-bold text-white border border-white/10 transition active:scale-95"
+                    <button
+                        onClick={loadData}
+                        className="px-5 py-2.5 bg-white/5 hover:bg-white/10 rounded-2xl text-xs font-bold text-white border border-white/10 transition active:scale-95 flex items-center gap-2"
                     >
-                        🔄 Actualiser
+                        <RefreshCw size={14} /> Actualiser
                     </button>
                 </div>
             </div>
 
             {error && (
                 <div className="p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-400 flex items-center gap-2 text-sm">
-                    <AlertCircle size={18}/> {error}
+                    <AlertCircle size={18} /> {error}
                 </div>
             )}
 
@@ -90,18 +89,17 @@ export default function ReservationsAdmin() {
                                 <tr key={r.id} className="hover:bg-white/[0.02] transition">
                                     <td className="px-6 py-4">
                                         <div className="font-bold text-white text-sm">{r.clientNom || 'Client Anonyme'}</div>
-                                        <div className="text-[11px] text-slate-500 mt-0.5">📞 {r.telephone || 'N/A'}</div>
+                                        <div className="text-[11px] text-slate-500 mt-0.5">{r.telephone || 'N/A'}</div>
                                     </td>
                                     <td className="px-6 py-4">
                                         <div className="text-sm font-semibold text-purple-300">{r.serviceNom || 'Intervention'}</div>
                                         <div className="text-[11px] text-slate-400 line-clamp-1 max-w-xs">{r.adresse}</div>
                                     </td>
-                                    
-                                    {/* CELLULE PRESTATAIRE CORRIGÉE */}
+
                                     <td className="px-6 py-4">
                                         {r.prestataire ? (
                                             <div>
-                                                <div className="text-sm font-medium text-white">💼 {r.prestataire.nomEntreprise || 'Prestataire'}</div>
+                                                <div className="text-sm font-medium text-white">{r.prestataire.nomEntreprise || 'Prestataire'}</div>
                                                 <div className="text-[10px] text-slate-500">ID : #{r.prestataire.id}</div>
                                             </div>
                                         ) : r.fournisseurId ? (
@@ -109,7 +107,7 @@ export default function ReservationsAdmin() {
                                                 Assigné (ID: {r.fournisseurId})
                                             </div>
                                         ) : r.refusePar ? (
-                                            <span className="text-[11px] text-rose-400 bg-rose-500/5 px-2 py-1 rounded-lg border border-rose-500/10">❌ Refusé #{r.refusePar}</span>
+                                            <span className="text-[11px] text-rose-400 bg-rose-500/5 px-2 py-1 rounded-lg border border-rose-500/10">Refusé #{r.refusePar}</span>
                                         ) : (
                                             <span className="text-xs text-slate-600 italic">Aucun prestataire</span>
                                         )}
@@ -119,8 +117,8 @@ export default function ReservationsAdmin() {
                                         <StatusBadge statut={r.statut} />
                                     </td>
                                     <td className="px-6 py-4 text-right">
-                                        <button 
-                                            onClick={() => setSelectedReservation(r)} 
+                                        <button
+                                            onClick={() => setSelectedReservation(r)}
                                             className="px-3 py-1.5 bg-white/5 hover:bg-purple-500/20 rounded-xl text-slate-300 hover:text-purple-300 transition text-xs font-semibold"
                                         >
                                             Gérer
@@ -135,15 +133,15 @@ export default function ReservationsAdmin() {
 
             {/* Modales */}
             {selectedReservation && (
-                <MissionDetailsModal 
-                    reservation={selectedReservation} 
-                    onClose={() => setSelectedReservation(null)} 
+                <MissionDetailsModal
+                    reservation={selectedReservation}
+                    onClose={() => setSelectedReservation(null)}
                     onRefresh={loadData}
                 />
             )}
             {showCreateModal && (
-                <CreateMissionModal 
-                    onClose={() => setShowCreateModal(false)} 
+                <CreateMissionModal
+                    onClose={() => setShowCreateModal(false)}
                     onRefresh={loadData}
                 />
             )}

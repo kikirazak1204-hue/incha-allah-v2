@@ -325,11 +325,12 @@ export const terminerMission = (id) =>
     headers: authHeaders(),
   });
 
-export const validerMissionClient = (id) =>
-  request(`/api/missions/${id}/valider`, {
-    method: 'PUT',
-    headers: authHeaders(),
-  });
+// NOTE : la validation client d'une mission ne passe plus par
+// /api/missions/:id/valider (route supprimée côté backend pour éviter
+// un double chemin incohérent). Utiliser exclusivement
+// validerBonIntervention(bonId, { note, commentaire }) ci-dessous,
+// qui met à jour la réservation, le bon ET la réputation du fournisseur
+// en une seule opération cohérente.
 
 export const signalerManqueMateriel = (id, descriptionMateriel) =>
   request(`/api/missions/${id}/materiel`, {

@@ -1,4 +1,4 @@
-const { sequelize, Reservation, ReservationItem, Fournisseur } = require('../models/Reservation'); // Adapte selon tes imports
+const { sequelize, Reservation, ReservationItem, Fournisseur } = require('../models');
 const { sendNotification } = require('../utils/notifications'); // Ton utilitaire FCM
 
 exports.createGlobalReservation = async (req, res) => {

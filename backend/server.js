@@ -150,7 +150,20 @@ const repairDatabase = async () => {
     const queries = [
         "ALTER TABLE produits ADD COLUMN categorie VARCHAR(255);",
         "ALTER TABLE produits ADD COLUMN quantite INT DEFAULT 0;",
-        "ALTER TABLE users ADD COLUMN fcm_token TEXT;"
+        "ALTER TABLE users ADD COLUMN fcm_token TEXT;",
+        // ── Ajout des colonnes manquantes pour les réservations ──
+        "ALTER TABLE reservations ADD COLUMN services JSON;",
+        "ALTER TABLE reservations ADD COLUMN montantTotal DECIMAL(10,2) DEFAULT 0;",
+        "ALTER TABLE reservations ADD COLUMN type VARCHAR(50) DEFAULT 'classique';",
+        "ALTER TABLE reservations ADD COLUMN parcours VARCHAR(50);",
+        "ALTER TABLE reservations ADD COLUMN statutPaiement VARCHAR(50) DEFAULT 'non_paye';",
+        "ALTER TABLE reservations ADD COLUMN commissionStatut VARCHAR(50) DEFAULT 'en_attente';",
+        "ALTER TABLE reservations ADD COLUMN clientId INT;",
+        "ALTER TABLE reservations ADD COLUMN fournisseurId INT;",
+        "ALTER TABLE reservations ADD COLUMN serviceId INT;",
+        "ALTER TABLE reservations ADD COLUMN serviceNom VARCHAR(255);",
+        "ALTER TABLE reservations ADD COLUMN valideAutomatiquement BOOLEAN DEFAULT false;",
+        "ALTER TABLE reservations ADD COLUMN besoin TEXT;"
     ];
 
     console.log("🛠️ Vérification des colonnes manquantes...");

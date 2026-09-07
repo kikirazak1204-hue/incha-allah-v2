@@ -5,13 +5,13 @@ const resController = require('../controllers/reservationController');
 
 // ── 🌍 Route Globale Multi-Services (Kanari Pro) ──────────
 // 💡 On délègue TOUTE la logique au contrôleur pour bénéficier 
-// des transactions, des ReservationItem et des notifications.
-// (Si tu veux forcer l'utilisateur à être connecté pour réserver, ajoute "protect")
+// des transactions et des notifications.
 router.post('/global', resController.createGlobalReservation);
 
 // ── Public / Client ───────────────────────────────────────
-router.post('/', resController.createReservation);
-// J'ai enlevé l'obligation de passer le :userId dans l'URL pour plus de sécurité.
+// CORRECTION : On utilise createGlobalReservation au lieu de createReservation (qui n'existait plus)
+router.post('/', resController.createGlobalReservation);
+
 // Le token de l'utilisateur connecté ("protect") suffira grâce à req.user.id
 router.get('/mes-reservations', protect, resController.getMesReservations);
 

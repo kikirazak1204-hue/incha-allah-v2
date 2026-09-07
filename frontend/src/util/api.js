@@ -281,11 +281,10 @@ export const adminCreerReservation = (payload) =>
     body: JSON.stringify(payload),
   });
 
-export const validerReservation = (id) =>
-  request(`/api/admin/reservations/${id}/valider`, {
-    method: 'PUT',
-    headers: authHeaders(),
-  });
+// SUPPRIMÉ : validerReservation (appelait PUT /api/admin/reservations/:id/valider,
+// route retirée côté backend). La validation d'une mission passe désormais
+// exclusivement par validerBonIntervention() ci-dessous, ou par le job
+// automatique après 24h côté serveur.
 
 export const refuserReservation = (id, motif = '') =>
   request(`/api/admin/reservations/${id}/refuser`, {

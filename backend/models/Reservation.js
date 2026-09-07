@@ -28,13 +28,14 @@ const Reservation = sequelize.define('Reservation', {
         type: DataTypes.DATEONLY,
         allowNull: true
     },
-    // 💡 Ajout de l'heure d'intervention
     heureIntervention: {
         type: DataTypes.STRING(20),
         allowNull: true
     },
 
-    // Stockage JSON des services (compatible MySQL Aiven)
+    // Stockage JSON des détails dynamiques du formulaire (servicesConfig.js) :
+    // les champs propres à la catégorie du service (urgence, participants,
+    // domaine de compétence, etc.), tels que saisis par le client.
     services: {
         type: DataTypes.JSON,
         allowNull: true,
@@ -56,7 +57,12 @@ const Reservation = sequelize.define('Reservation', {
         defaultValue: 'classique',
         validate: {
             isIn: {
-                args: [['classique', 'planifie', 'contrat']],
+                // 'candidature' ajouté : couvre les services sans paiement ni
+                // fournisseur assigné au départ (mission_freelance, benevolat
+                // dans servicesConfig.js). Reste dans la même table plutôt
+                // qu'une infrastructure séparée, pour rester visible depuis
+                // les mêmes écrans admin déjà construits.
+                args: [['classique', 'planifie', 'contrat', 'candidature']],
                 msg: "Le type de réservation est invalide."
             }
         }
@@ -88,19 +94,17 @@ const Reservation = sequelize.define('Reservation', {
         }
     },
 
-    // 💡 Mise à jour des modes de paiement acceptés par le système
     modePaiement: {
         type: DataTypes.STRING(50),
         allowNull: true,
         validate: {
             isIn: {
-                args: [['mobile_money', 'carte_bancaire', 'especes', 'depot_kanari', 'direct_prestataire']],
+                args: [['mobile_money', 'carte_bancaire', 'especes', 'depot_kanari', 'direct_prestataire', 'aucun']],
                 msg: "Mode de paiement non pris en charge."
             }
         }
     },
 
-    // 💡 Ajout du suivi de l'état financier du dossier
     statutPaiement: {
         type: DataTypes.STRING(30),
         defaultValue: 'non_paye',
@@ -156,7 +160,6 @@ const Reservation = sequelize.define('Reservation', {
         allowNull: true
     },
 
-    // Refus
     refusePar: {
         type: DataTypes.INTEGER,
         allowNull: true,
@@ -173,7 +176,9 @@ const Reservation = sequelize.define('Reservation', {
         defaultValue: false
     },
 
-    // Bon d'intervention 
+    // Bon d'intervention (legacy — la vraie source de vérité est désormais
+    // la table bons_intervention, ces colonnes restent pour compatibilité
+    // avec d'anciennes données)
     descriptionTravail: {
         type: DataTypes.TEXT,
         allowNull: true

@@ -7,6 +7,9 @@ const path = require('path');
 // Importation de la connexion Sequelize
 const { sequelize } = require('./models');
 
+// Job planifié : validation automatique des bons d'intervention après 24h
+const { runAutoValiderBonsIntervention } = require('./jobs/autoValiderBonsIntervention');
+
 // ==========================================
 // 🔥 INITIALISATION FIREBASE ADMIN SDK
 // ==========================================
@@ -66,52 +69,16 @@ app.get('/api/health', (req, res) => {
 });
 
 // ==========================================
-// 3. ROUTE GLOBALE DE RÉSERVATION (MULTI-SERVICES)
+// SUPPRIMÉ : ancienne route factice /api/reservations/global déclarée
+// directement sur `app`. Elle interceptait TOUTES les réservations avant
+// qu'elles n'atteignent le vrai contrôleur (routes/reservations.js →
+// createGlobalReservation), qui écrit réellement en base et notifie le
+// prestataire. Résultat concret du bug : chaque réservation soumise
+// depuis ReservationPage.jsx recevait une fausse confirmation, sans
+// jamais être créée en base — aucun fournisseur ne la recevait jamais.
+// La vraie route est maintenant la seule à exister, montée plus bas via
+// app.use('/api/reservations', require('./routes/reservations')).
 // ==========================================
-
-app.post('/api/reservations/global', async (req, res) => {
-    try {
-        const {
-            clientNom,
-            telephone,
-            adresse,
-            dateIntervention,
-            modePaiement,
-            commentaireGlobal,
-            fournisseurId,
-            services
-        } = req.body;
-
-        if (!clientNom || !telephone || !adresse || !services || !Array.isArray(services) || services.length === 0) {
-            return res.status(400).json({
-                success: false,
-                message: "Informations incomplètes pour enregistrer le projet."
-            });
-        }
-
-        const simulatedId = "kanari_proj_" + Date.now();
-
-        console.log("✅ Projet global reçu par Kanari Backend :", {
-            client: clientNom,
-            telephone,
-            totalServices: services.length,
-            modePaiement
-        });
-
-        return res.status(201).json({
-            success: true,
-            id: simulatedId,
-            message: "Projet global enregistré avec succès !"
-        });
-
-    } catch (error) {
-        console.error("❌ Erreur serveur /api/reservations/global :", error);
-        return res.status(500).json({
-            success: false,
-            message: "Erreur interne du serveur Kanari."
-        });
-    }
-});
 
 // ==========================================
 // 4. ENREGISTREMENT DES ROUTES API
@@ -203,6 +170,32 @@ const repairDatabase = async () => {
 };
 
 // ==========================================
+// ⏱️ PLANIFICATION DU JOB DE VALIDATION AUTOMATIQUE
+// ==========================================
+// Exécute la validation automatique des bons d'intervention en attente
+// depuis plus de 24h : une fois au démarrage (rattrape ce qui s'est
+// accumulé pendant que le serveur était éteint), puis toutes les heures.
+const INTERVALLE_JOB_MS = 60 * 60 * 1000; // 1 heure
+let intervalleJobBons = null;
+
+const demarrerJobAutoValidation = () => {
+    // Premier passage peu après le démarrage, pour ne pas bloquer le boot
+    setTimeout(() => {
+        runAutoValiderBonsIntervention().catch(err =>
+            console.error('[auto-validation] Erreur au passage initial :', err.message)
+        );
+    }, 10_000);
+
+    intervalleJobBons = setInterval(() => {
+        runAutoValiderBonsIntervention().catch(err =>
+            console.error('[auto-validation] Erreur lors du passage planifié :', err.message)
+        );
+    }, INTERVALLE_JOB_MS);
+
+    console.log(`⏱️ Job de validation automatique des bons d'intervention planifié (toutes les ${INTERVALLE_JOB_MS / 60000} min).`);
+};
+
+// ==========================================
 // 7. INITIALISATION ET DÉMARRAGE
 // ==========================================
 
@@ -221,6 +214,8 @@ const startServer = async () => {
         app.listen(PORT, () => {
             console.log(`🚀 Serveur en écoute sur le port ${PORT}`);
         });
+
+        demarrerJobAutoValidation();
     } catch (error) {
         console.error('❌ Impossible de se connecter ou de synchroniser la base de données :', error);
         process.exit(1);
@@ -231,6 +226,7 @@ startServer();
 
 process.on('SIGINT', async () => {
     console.log('\nFermeture du serveur et des connexions DB...');
+    if (intervalleJobBons) clearInterval(intervalleJobBons);
     await sequelize.close();
     process.exit(0);
 });

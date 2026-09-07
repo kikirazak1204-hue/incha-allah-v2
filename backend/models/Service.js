@@ -16,7 +16,16 @@ const Service = sequelize.define('Service', {
         type: DataTypes.STRING,
         allowNull: true
     },
-    description: DataTypes.TEXT
+    description: DataTypes.TEXT,
+
+    // Clé de routage vers frontend/src/config/servicesConfig.js — détermine
+    // quel formulaire dynamique afficher (panne, rendez_vous, divertissement,
+    // voyage, mission_freelance, benevolat). 'default' si non catégorisé.
+    categorie: {
+        type: DataTypes.STRING(50),
+        allowNull: true,
+        defaultValue: 'default'
+    }
 }, {
     tableName: 'services',
     timestamps: true

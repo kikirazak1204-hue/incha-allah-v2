@@ -101,5 +101,20 @@ export const CONFIG_SERVICES = {
             { id: 'date', type: 'date', label: 'Date de disponibilité', requis: true },
             { id: 'description', type: 'textarea', label: 'Description de la mission / motivation', requis: true }
         ]
+    },
+
+    // Catégorie de repli — s'applique à tout service dont le champ
+    // `categorie` (backend/models/Service.js) n'a pas encore été renseigné
+    // ou ne correspond à aucune des clés ci-dessus. Sans elle, un service
+    // non catégorisé afficherait un formulaire totalement vide.
+    default: {
+        titre: "Demande de service",
+        actionBouton: "Confirmer la demande",
+        typeFormulaire: 'reservation',
+        paiementObligatoire: false,
+        collectif: false,
+        champs: [
+            { id: 'description', type: 'textarea', label: 'Précisez votre besoin', requis: true, placeholder: 'Détaillez votre demande pour le prestataire...' }
+        ]
     }
 };

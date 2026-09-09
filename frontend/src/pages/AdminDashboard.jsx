@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 // On remonte d'un seul niveau (../) car nous sommes dans src/pages/
 import ValidationsAdmin from '../components/admin/ValidationsAdmin';
-import PaiementAdmin from '../components/admin/PaiementAdmin';
+
 import UtilisateursAdmin from '../components/admin/UtilisateursAdmin';
 import ProduitsAdmin from '../components/admin/ProduitsAdmin';
 import ReservationsAdmin from '../components/admin/ReservationsAdmin';

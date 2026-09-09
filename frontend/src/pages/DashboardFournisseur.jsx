@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { getDashboardFournisseur, getProduitsFournisseur, deleteProduit, addProduit } from '../util/api';
+import { getDashboardFournisseur, getProduitsFournisseur, deleteProduit, addProduit, getBonInterventionParReservation } from '../util/api';
 import { useNotification } from '../context/NotificationContext.jsx';
 import SoldeRetrait from '../components/SoldeRetrait';
 import { STATUT, STATUT_FALLBACK, BADGE_PROFIL, STATUTS_TELEPHONE_VISIBLE } from '../constants/statuts';
@@ -636,6 +636,88 @@ function OngletDevis({ token }) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// ONGLET : MES REÇUS — même document imprimable que le bon
+// d'intervention transmis, pour chaque mission clôturée.
+// ════════════════════════════════════════════════════════════════
+function CarteRecuFournisseur({ mission, token }) {
+    const [bon, setBon] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const printRef = useRef(null);
+
+    const chargerEtImprimer = async () => {
+        setLoading(true);
+        try {
+            const d = await getBonInterventionParReservation(mission.id);
+            if (d.success) {
+                setBon(d.data);
+                setTimeout(() => window.print(), 150);
+            } else {
+                alert(d.message || 'Reçu introuvable pour cette mission.');
+            }
+        } catch (err) {
+            alert(err.message || 'Erreur de connexion au serveur.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-3 text-left">
+            <div>
+                <span className="text-xs font-bold text-purple-400">Mission #{mission.id}</span>
+                <p className="text-white font-bold text-sm mt-0.5">{mission.serviceNom || mission.service?.nom || 'Service'}</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                    {mission.client?.nom || mission.clientNom || 'Client'} · {Number(mission.montantTotal || 0).toLocaleString()} FCFA
+                </p>
+            </div>
+            <button
+                onClick={chargerEtImprimer}
+                disabled={loading}
+                className="px-4 py-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 rounded-xl text-xs font-bold border border-white/[0.08] transition-all disabled:opacity-50 shrink-0"
+            >
+                {loading ? 'Chargement...' : 'Voir / Imprimer le reçu'}
+            </button>
+
+            {bon && (
+                <BonInterventionPrint
+                    ref={printRef}
+                    type="bon"
+                    numero={`BI-${mission.id}`}
+                    mission={mission}
+                    client={mission.client}
+                    prestataire={{ nomEntreprise: bon.fournisseurBon?.nomEntreprise, telephone: bon.fournisseurBon?.telephone }}
+                    description={bon.descriptionTravail}
+                    dateDocument={bon.valideLe || bon.createdAt}
+                    lignes={[
+                        { label: "Main d'œuvre", montant: bon.montantMainOeuvre },
+                        { label: bon.piecesOutils || 'Pièces / matériel', montant: bon.montantPiecesOutils },
+                    ]}
+                />
+            )}
+        </div>
+    );
+}
+
+function OngletRecusFournisseur({ missions, token }) {
+    const missionsValidees = missions.filter(m => m.statut === 'VALIDEE');
+
+    if (missionsValidees.length === 0) {
+        return (
+            <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-12 text-center space-y-2">
+                <p className="text-slate-400 text-sm">Aucun reçu disponible pour le moment.</p>
+                <p className="text-slate-600 text-xs">Le reçu d'une mission apparaît ici une fois la prestation validée par le client.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3 text-left">
+            {missionsValidees.map(m => <CarteRecuFournisseur key={m.id} mission={m} token={token} />)}
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ════════════════════════════════════════════════════════════════
 export default function DashboardFournisseur({ setCurrentView }) {
@@ -734,10 +816,13 @@ export default function DashboardFournisseur({ setCurrentView }) {
     const missionsActives = missions.filter(m => !['TERMINEE', 'VALIDEE', 'ANNULEE'].includes(m.statut));
     const badgeProfil = BADGE_PROFIL[profil?.statutKanari] || BADGE_PROFIL.EN_ATTENTE;
 
+    const missionsValideesFournisseur = missions.filter(m => m.statut === 'VALIDEE');
+
     const tabs = [
         { id: 'overview', label: 'Vue d\'ensemble', icon: '' },
         { id: 'devis', label: 'AO & Devis', icon: '' },
         { id: 'missions', label: 'Interventions', icon: '', badge: missionsActives.length },
+        { id: 'recus', label: 'Mes Reçus', icon: '', badge: missionsValideesFournisseur.length },
         { id: 'commandes', label: 'Commandes Shop', icon: '' },
         { id: 'produits', label: 'Catalogue', icon: '' },
         { id: 'solde', label: 'Portefeuille', icon: '' },
@@ -811,7 +896,28 @@ export default function DashboardFournisseur({ setCurrentView }) {
                             <StatCard label="Missions actives" value={missionsActives.length} gradient="from-purple-600 to-blue-500" />
                             <StatCard label="Missions traitées" value={stats?.totalMissions ?? 0} gradient="from-purple-500 to-pink-500" />
                             <StatCard label="Ventes directes" value={stats?.totalCommandes ?? 0} gradient="from-blue-500 to-cyan-500" />
-                            <StatCard label="Chiffre d'affaires" value={`${stats?.totalRevenus?.toLocaleString() ?? 0} F`} gradient="from-emerald-400 to-teal-500" />
+                            <StatCard label="Net à recevoir (mois)" value={`${stats?.totalRevenus?.toLocaleString() ?? 0} F`} gradient="from-emerald-400 to-teal-500" />
+                        </div>
+
+                        <div className="rounded-2xl border border-white/5 bg-white/[0.03] p-5 backdrop-blur-md">
+                            <h2 className="mb-4 text-sm font-semibold text-slate-100">Résumé financier du mois</h2>
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                    <p className="text-xs text-slate-500">Chiffre d'affaires brut</p>
+                                    <p className="mt-1 text-lg font-semibold text-slate-100">{Number(stats?.brutMois || 0).toLocaleString()} FCFA</p>
+                                </div>
+                                <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4">
+                                    <p className="text-xs text-slate-500">Commission Kanari</p>
+                                    <p className="mt-1 text-lg font-semibold text-rose-400">- {Number(stats?.commissionMois || 0).toLocaleString()} FCFA</p>
+                                </div>
+                                <div className="rounded-xl border border-violet-500/20 bg-gradient-to-br from-violet-600/10 to-indigo-600/10 p-4">
+                                    <p className="text-xs text-slate-400">Net à recevoir</p>
+                                    <p className="mt-1 text-lg font-semibold text-slate-50">{Number(stats?.netMois || 0).toLocaleString()} FCFA</p>
+                                </div>
+                            </div>
+                            <p className="mt-3 text-[11px] text-slate-600">
+                                Cumul total depuis le début : {Number(stats?.totalBrut || 0).toLocaleString()} FCFA brut, {Number(stats?.totalCommission || 0).toLocaleString()} FCFA de commission, {Number(stats?.totalNet || 0).toLocaleString()} FCFA net.
+                            </p>
                         </div>
 
                         {missionsActives.length > 0 && (
@@ -961,6 +1067,10 @@ export default function DashboardFournisseur({ setCurrentView }) {
                             </div>
                         )}
                     </section>
+                )}
+
+                {activeTab === 'recus' && (
+                    <OngletRecusFournisseur missions={missions} token={token} />
                 )}
 
                 {activeTab === 'commandes' && (

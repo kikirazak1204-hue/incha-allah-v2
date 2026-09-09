@@ -359,3 +359,43 @@ export const validerBonIntervention = (bonId, { note, commentaire }) =>
     headers: authHeaders(),
     body: JSON.stringify({ note, commentaire }),
   });
+
+// ============================================================
+// 📨 DEVIS (CÔTÉ CLIENT)
+// ============================================================
+export const getDevisReservation = (reservationId) =>
+  request(`/api/devis/reservation/${reservationId}`, {
+    headers: authHeaders(),
+  });
+
+export const accepterDevis = (devisId) =>
+  request(`/api/devis/${devisId}/accepter`, {
+    method: 'PUT',
+    headers: authHeaders(),
+  });
+
+// ============================================================
+// 👤 PROFIL UTILISATEUR
+// ============================================================
+export const updateUser = (userId, payload) =>
+  request(`/api/users/${userId}`, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
+  });
+
+// ============================================================
+// ⚙️ PARAMÈTRES (ADMIN)
+// ============================================================
+export const getSettings = () =>
+  request('/api/settings', { headers: authHeaders() });
+
+export const updateSetting = (cle, { valeur, motif }) =>
+  request(`/api/settings/${cle}`, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ valeur, motif }),
+  });
+
+export const getHistoriqueSetting = (cle) =>
+  request(`/api/settings/${cle}/historique`, { headers: authHeaders() });

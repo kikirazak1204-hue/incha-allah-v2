@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getDashboardClient, getBonInterventionParReservation, validerBonIntervention } from '../util/api';
+import { getDashboardClient, getBonInterventionParReservation, validerBonIntervention, getDevisReservation, accepterDevis, updateUser } from '../util/api';
 import { STATUT, STATUT_FALLBACK, STATUTS_ACTIFS } from '../constants/statuts';
 import BonInterventionPrint from '../components/BonInterventionPrint';
 
@@ -359,6 +359,279 @@ function BonAValiderModal({ mission, token, onClose, onValide }) {
 }
 
 // ════════════════════════════════════════════════════════════════
+// ONGLET : OFFRES REÇUES — devis de plusieurs prestataires sur une
+// même demande en attente. Backend déjà existant (routes/devis.js),
+// il ne manquait que cet écran côté client.
+// ════════════════════════════════════════════════════════════════
+function CarteDevisReservation({ mission, token, onAccepte }) {
+    const [devisListe, setDevisListe] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [acceptation, setAcceptation] = useState(null);
+
+    useEffect(() => {
+        let actif = true;
+        (async () => {
+            try {
+                const d = await getDevisReservation(mission.id);
+                if (actif && d.success) setDevisListe(d.data || []);
+            } catch { } finally {
+                if (actif) setLoading(false);
+            }
+        })();
+        return () => { actif = false; };
+    }, [mission.id]);
+
+    const accepter = async (devisId) => {
+        if (!window.confirm("Confirmer ce prestataire pour votre mission ? Les autres devis seront automatiquement refusés.")) return;
+        setAcceptation(devisId);
+        try {
+            const d = await accepterDevis(devisId);
+            if (d.success) onAccepte(mission.id);
+            else alert(d.message || "Erreur lors de l'acceptation.");
+        } catch (err) {
+            alert(err.message || 'Erreur de connexion au serveur.');
+        } finally {
+            setAcceptation(null);
+        }
+    };
+
+    return (
+        <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-6 space-y-4 text-left">
+            <div>
+                <span className="text-xs font-bold text-purple-400">Mission #{mission.id}</span>
+                <h4 className="font-extrabold text-white text-lg mt-0.5">{mission.serviceNom || mission.service?.nom || 'Service'}</h4>
+                <p className="text-xs text-slate-500 mt-0.5">{mission.adresse}</p>
+            </div>
+
+            {loading ? (
+                <p className="text-sm text-slate-500 animate-pulse">Chargement des offres...</p>
+            ) : devisListe.length === 0 ? (
+                <p className="text-sm text-slate-500">Aucune offre reçue pour le moment. Les prestataires de votre secteur ont été notifiés.</p>
+            ) : (
+                <div className="space-y-3">
+                    {devisListe.map(devis => (
+                        <div key={devis.id} className="bg-white/[0.02] border border-white/[0.07] rounded-2xl p-4 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
+                            <div>
+                                <p className="text-sm font-bold text-white">{devis.fournisseurDevis?.nomEntreprise || 'Prestataire'}</p>
+                                {Number(devis.fournisseurDevis?.note) > 0 && (
+                                    <p className="text-xs text-amber-400">{Number(devis.fournisseurDevis.note).toFixed(1)} / 5</p>
+                                )}
+                                {devis.description && <p className="text-xs text-slate-400 mt-1">{devis.description}</p>}
+                            </div>
+                            <div className="flex items-center gap-3 shrink-0">
+                                <span className="text-base font-black text-emerald-400">{Number(devis.montant).toLocaleString()} FCFA</span>
+                                <button
+                                    onClick={() => accepter(devis.id)}
+                                    disabled={acceptation === devis.id}
+                                    className="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-90 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50"
+                                >
+                                    {acceptation === devis.id ? 'Confirmation...' : 'Accepter cette offre'}
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function OngletOffresRecues({ missions, token, onDevisAccepte }) {
+    const missionsEnAttente = missions.filter(m => m.statut === 'EN_ATTENTE');
+
+    if (missionsEnAttente.length === 0) {
+        return (
+            <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-12 text-center space-y-2">
+                <p className="text-slate-400 text-sm">Aucune demande en attente d'offre pour le moment.</p>
+                <p className="text-slate-600 text-xs">Dès qu'une demande sans prestataire assigné reçoit des propositions, elles apparaissent ici.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4 text-left">
+            {missionsEnAttente.map(m => (
+                <CarteDevisReservation key={m.id} mission={m} token={token} onAccepte={onDevisAccepte} />
+            ))}
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════
+// ONGLET : MES REÇUS — réutilise le même document imprimable que le
+// bon d'intervention (BonInterventionPrint) pour chaque mission
+// clôturée. Pas de système séparé à maintenir : le bon d'intervention
+// validé EST le reçu de la prestation.
+// ════════════════════════════════════════════════════════════════
+function CarteRecu({ mission, token }) {
+    const [bon, setBon] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const printRef = useRef(null);
+
+    const chargerEtImprimer = async () => {
+        setLoading(true);
+        try {
+            const d = await getBonInterventionParReservation(mission.id);
+            if (d.success) {
+                setBon(d.data);
+                setTimeout(() => window.print(), 150);
+            } else {
+                alert(d.message || 'Reçu introuvable pour cette mission.');
+            }
+        } catch (err) {
+            alert(err.message || 'Erreur de connexion au serveur.');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="bg-white/[0.02] border border-white/[0.07] rounded-2xl p-5 flex flex-col sm:flex-row justify-between sm:items-center gap-3 text-left">
+            <div>
+                <span className="text-xs font-bold text-purple-400">Mission #{mission.id}</span>
+                <p className="text-white font-bold text-sm mt-0.5">{mission.serviceNom || mission.service?.nom || 'Service'}</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                    {mission.prestataire?.nomEntreprise || 'Prestataire'} · {Number(mission.montantTotal || 0).toLocaleString()} FCFA
+                </p>
+            </div>
+            <button
+                onClick={chargerEtImprimer}
+                disabled={loading}
+                className="px-4 py-2.5 bg-white/[0.04] hover:bg-white/[0.08] text-slate-200 rounded-xl text-xs font-bold border border-white/[0.08] transition-all disabled:opacity-50 shrink-0"
+            >
+                {loading ? 'Chargement...' : 'Voir / Imprimer le reçu'}
+            </button>
+
+            {bon && (
+                <BonInterventionPrint
+                    ref={printRef}
+                    type="bon"
+                    numero={`BI-${mission.id}`}
+                    mission={mission}
+                    client={mission.client}
+                    prestataire={{ nomEntreprise: bon.fournisseurBon?.nomEntreprise || mission.prestataire?.nomEntreprise, telephone: bon.fournisseurBon?.telephone }}
+                    description={bon.descriptionTravail}
+                    dateDocument={bon.valideLe || bon.createdAt}
+                    lignes={[
+                        { label: "Main d'œuvre", montant: bon.montantMainOeuvre },
+                        { label: bon.piecesOutils || 'Pièces / matériel', montant: bon.montantPiecesOutils },
+                    ]}
+                />
+            )}
+        </div>
+    );
+}
+
+function OngletRecus({ missions, token }) {
+    const missionsValidees = missions.filter(m => m.statut === 'VALIDEE');
+
+    if (missionsValidees.length === 0) {
+        return (
+            <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-12 text-center space-y-2">
+                <p className="text-slate-400 text-sm">Aucun reçu disponible pour le moment.</p>
+                <p className="text-slate-600 text-xs">Le reçu d'une mission apparaît ici une fois la prestation validée.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-3 text-left">
+            {missionsValidees.map(m => <CarteRecu key={m.id} mission={m} token={token} />)}
+        </div>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════
+// ONGLET : MON PROFIL — réellement modifiable, branché sur
+// PUT /api/users/:id (backend/routes/users.js).
+// ════════════════════════════════════════════════════════════════
+function OngletProfilClient({ currentUser, onProfilMisAJour }) {
+    const [form, setForm] = useState({
+        nom: currentUser.nom || '',
+        prenom: currentUser.prenom || '',
+        email: currentUser.email || '',
+        telephone: currentUser.telephone || '',
+        ville: currentUser.ville || '',
+    });
+    const [loading, setLoading] = useState(false);
+    const [message, setMessage] = useState({ text: '', type: '' });
+
+    const champ = (id) => (e) => setForm(p => ({ ...p, [id]: e.target.value }));
+
+    const enregistrer = async (e) => {
+        e.preventDefault();
+        setMessage({ text: '', type: '' });
+        if (!form.nom.trim() || !form.telephone.trim()) {
+            setMessage({ text: 'Le nom et le téléphone sont obligatoires.', type: 'error' });
+            return;
+        }
+        setLoading(true);
+        try {
+            const d = await updateUser(currentUser.id, {
+                nom: form.nom.trim(),
+                prenom: form.prenom.trim() || null,
+                email: form.email.trim() || null,
+                telephone: form.telephone.trim(),
+                ville: form.ville.trim() || null,
+            });
+            if (d.success) {
+                onProfilMisAJour(d.data);
+                setMessage({ text: 'Profil mis à jour avec succès.', type: 'success' });
+            } else {
+                setMessage({ text: d.message || 'Erreur lors de la mise à jour.', type: 'error' });
+            }
+        } catch (err) {
+            setMessage({ text: err.message || 'Erreur de connexion au serveur.', type: 'error' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <form onSubmit={enregistrer} className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-8 space-y-6 text-left max-w-xl">
+            <h3 className="font-extrabold text-xl text-white">Mon Profil Client</h3>
+
+            {message.text && (
+                <div className={`p-3.5 rounded-xl text-xs font-semibold border ${message.type === 'error' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'}`}>
+                    {message.text}
+                </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 block mb-1.5">Nom *</label>
+                    <input value={form.nom} onChange={champ('nom')} className="w-full bg-[#090D16] border border-white/[0.08] focus:border-purple-500 text-slate-200 rounded-xl p-3 text-sm outline-none transition-all" />
+                </div>
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 block mb-1.5">Prénom</label>
+                    <input value={form.prenom} onChange={champ('prenom')} className="w-full bg-[#090D16] border border-white/[0.08] focus:border-purple-500 text-slate-200 rounded-xl p-3 text-sm outline-none transition-all" />
+                </div>
+            </div>
+
+            <div>
+                <label className="text-xs font-semibold text-slate-500 block mb-1.5">Adresse e-mail</label>
+                <input type="email" value={form.email} onChange={champ('email')} className="w-full bg-[#090D16] border border-white/[0.08] focus:border-purple-500 text-slate-200 rounded-xl p-3 text-sm outline-none transition-all" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 block mb-1.5">Téléphone *</label>
+                    <input value={form.telephone} onChange={champ('telephone')} className="w-full bg-[#090D16] border border-white/[0.08] focus:border-purple-500 text-slate-200 rounded-xl p-3 text-sm outline-none transition-all" />
+                </div>
+                <div>
+                    <label className="text-xs font-semibold text-slate-500 block mb-1.5">Ville</label>
+                    <input value={form.ville} onChange={champ('ville')} className="w-full bg-[#090D16] border border-white/[0.08] focus:border-purple-500 text-slate-200 rounded-xl p-3 text-sm outline-none transition-all" />
+                </div>
+            </div>
+
+            <button type="submit" disabled={loading} className="w-full py-3 bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-90 text-white font-bold rounded-xl text-sm shadow-lg transition-all disabled:opacity-50">
+                {loading ? 'Enregistrement...' : 'Enregistrer les modifications'}
+            </button>
+        </form>
+    );
+}
+
+// ════════════════════════════════════════════════════════════════
 // COMPOSANT PRINCIPAL
 // ════════════════════════════════════════════════════════════════
 export default function DashboardClient() {
@@ -376,8 +649,17 @@ export default function DashboardClient() {
     const pubAleatoire = useMemo(() => BANNIERES_PUB[Math.floor(Math.random() * BANNIERES_PUB.length)], []);
     const token = useMemo(() => localStorage.getItem('token'), []);
 
-    let currentUser = {};
-    try { currentUser = JSON.parse(localStorage.getItem('user')) || {}; } catch { }
+    const [currentUser, setCurrentUser] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('user')) || {}; } catch { return {}; }
+    });
+
+    const handleProfilMisAJour = (userMisAJour) => {
+        setCurrentUser(prev => {
+            const fusionne = { ...prev, ...userMisAJour };
+            try { localStorage.setItem('user', JSON.stringify(fusionne)); } catch { }
+            return fusionne;
+        });
+    };
 
     const handleRemarqueSaved = (missionId, nouvelleRemarque) => {
         setMissions(prev => prev.map(m => m.id === missionId ? { ...m, remarqueClient: nouvelleRemarque } : m));
@@ -456,12 +738,17 @@ export default function DashboardClient() {
     const missionsActives = missions.filter(m => STATUTS_ACTIFS.includes(m.statut));
     const missionsAValider = missions.filter(m => m.statut === 'TERMINEE');
     const missionsTerminees = missions.filter(m => m.statut === 'VALIDEE');
-    const toutesTransactions = missions.filter(m => Number(m.montant || m.montantMainOeuvre || m.acompte || 0) > 0);
-    const totalDepense = toutesTransactions.reduce((acc, m) => acc + Number(m.montant || m.montantMainOeuvre || m.acompte || 0), 0);
+    const missionsEnAttenteOffres = missions.filter(m => m.statut === 'EN_ATTENTE');
+    // ✅ CORRIGÉ : Reservation n'a pas de champ `montant` ni `acompte` — le
+    // vrai champ est `montantTotal` (voir backend/models/Reservation.js).
+    const toutesTransactions = missions.filter(m => Number(m.montantTotal || 0) > 0);
+    const totalDepense = toutesTransactions.reduce((acc, m) => acc + Number(m.montantTotal || 0), 0);
 
     const tabs = [
         { id: 'overview', label: 'Vue d\'ensemble', icon: '' },
         { id: 'missions', label: 'Mes Réservations', icon: '', badge: missionsActives.length + missionsAValider.length },
+        { id: 'offres', label: 'Offres reçues', icon: '', badge: missionsEnAttenteOffres.length },
+        { id: 'recus', label: 'Mes Reçus', icon: '', badge: missionsTerminees.length },
         { id: 'paiements', label: 'Paiements & Transactions', icon: '', badge: toutesTransactions.length },
         { id: 'profil', label: 'Mon Profil', icon: '' },
     ];
@@ -649,6 +936,18 @@ export default function DashboardClient() {
                     </div>
                 )}
 
+                {activeTab === 'offres' && (
+                    <OngletOffresRecues
+                        missions={missions}
+                        token={token}
+                        onDevisAccepte={(missionId) => setMissions(prev => prev.map(m => m.id === missionId ? { ...m, statut: 'ACCEPTEE' } : m))}
+                    />
+                )}
+
+                {activeTab === 'recus' && (
+                    <OngletRecus missions={missions} token={token} />
+                )}
+
                 {activeTab === 'paiements' && (
                     <div className="space-y-6 text-left">
                         <div className="flex justify-between items-center">
@@ -685,23 +984,7 @@ export default function DashboardClient() {
                 )}
 
                 {activeTab === 'profil' && (
-                    <div className="bg-white/[0.02] border border-white/[0.07] rounded-3xl p-8 space-y-6 text-left max-w-xl">
-                        <h3 className="font-extrabold text-xl text-white">Mon Profil Client</h3>
-                        <div className="space-y-3 text-sm">
-                            <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/[0.05]">
-                                <span className="text-slate-500 text-xs block">Nom complet</span>
-                                <span className="text-white font-bold">{currentUser.nom || currentUser.prenom || 'Client'}</span>
-                            </div>
-                            <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/[0.05]">
-                                <span className="text-slate-500 text-xs block">Adresse e-mail</span>
-                                <span className="text-white font-bold">{currentUser.email || 'Non renseigné'}</span>
-                            </div>
-                            <div className="p-4 bg-white/[0.02] rounded-2xl border border-white/[0.05]">
-                                <span className="text-slate-500 text-xs block">Téléphone</span>
-                                <span className="text-white font-bold">{currentUser.telephone || 'Non renseigné'}</span>
-                            </div>
-                        </div>
-                    </div>
+                    <OngletProfilClient currentUser={currentUser} onProfilMisAJour={handleProfilMisAJour} />
                 )}
             </main>
 

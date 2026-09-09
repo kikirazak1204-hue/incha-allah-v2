@@ -5,6 +5,7 @@ import PaiementAdmin from '../components/admin/PaiementAdmin';
 import UtilisateursAdmin from '../components/admin/UtilisateursAdmin';
 import ProduitsAdmin from '../components/admin/ProduitsAdmin';
 import ReservationsAdmin from '../components/admin/ReservationsAdmin';
+import ParametresAdmin from '../components/admin/ParametresAdmin';
 
 export default function AdminDashboard() {
   const [tab, setTab] = useState('reservations');
@@ -15,6 +16,7 @@ export default function AdminDashboard() {
     { id: 'utilisateurs', label: 'Utilisateurs', color: 'from-purple-600 to-indigo-500' },
     { id: 'paiements', label: 'Paiements', color: 'from-emerald-600 to-teal-500' },
     { id: 'produits', label: 'Produits', color: 'from-orange-600 to-red-500' },
+    { id: 'parametres', label: 'Paramètres', color: 'from-slate-600 to-slate-500' },
   ];
 
   return (
@@ -69,6 +71,7 @@ export default function AdminDashboard() {
           {tab === 'utilisateurs' && <UtilisateursAdmin />}
           {tab === 'paiements' && <PaiementAdmin />}
           {tab === 'produits' && <ProduitsAdmin />}
+          {tab === 'parametres' && <ParametresAdmin />}
         </div>
       </main>
     </div>

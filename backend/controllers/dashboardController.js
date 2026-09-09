@@ -1,9 +1,8 @@
 const {
-    Produit, Commande, Facture,
+    Produit, Commande,
     CommandeProduit, Fournisseur, User, Reservation, BonIntervention
 } = require('../models');
 
-// Exportation directe via "exports"
 exports.getDashboardFournisseur = async (req, res) => {
     try {
         const fournisseur = await Fournisseur.findOne({
@@ -13,18 +12,16 @@ exports.getDashboardFournisseur = async (req, res) => {
         if (!fournisseur) return res.status(404).json({ success: false, message: 'Profil non trouvé' });
 
         const fId = fournisseur.id;
-        const [totalProduits, totalRevenus, totalCommandes, missions, commandesRecentes] = await Promise.all([
+        const [totalProduits, totalCommandes, missions, commandesRecentes, bonsValides] = await Promise.all([
             Produit.count({ where: { fournisseurId: fId } }),
-            Facture.sum('montantTotal', { where: { fournisseurId: fId } }).then(v => v || 0),
             Commande.count({ where: { fournisseurId: fId } }),
             Reservation.findAll({
                 where: { fournisseurId: fId },
-                attributes: ['id', 'besoin', 'adresse', 'telephone', 'clientNom', 'dateIntervention', 'type', 'parcours', 'statut', 'descriptionTravail', 'montantMainOeuvre', 'piecesFournies', 'createdAt'],
                 include: [
                     { model: User, as: 'client', attributes: ['nom', 'email', 'telephone'] },
-                    { model: BonIntervention, as: 'bonIntervention', attributes: { exclude: ['descriptionTravail', 'montantMainOeuvre'] } }
+                    { model: BonIntervention, as: 'bonIntervention' }
                 ],
-                limit: 10,
+                limit: 20,
                 order: [['createdAt', 'DESC']]
             }),
             Commande.findAll({
@@ -39,8 +36,28 @@ exports.getDashboardFournisseur = async (req, res) => {
                 ],
                 limit: 5,
                 order: [['createdAt', 'DESC']]
+            }),
+            // ── Vrais montants de commission : plus de "10%" codé en dur.
+            // On lit directement les bons validés de ce fournisseur, dont
+            // le taux/montant de commission a été figé au moment de la
+            // validation (voir bonInterventionController.js).
+            BonIntervention.findAll({
+                where: { fournisseurId: fId, valide: true }
             })
         ]);
+
+        const totalBrut = bonsValides.reduce((acc, b) => acc + Number(b.montantFinal || 0), 0);
+        const totalCommission = bonsValides.reduce((acc, b) => acc + Number(b.montantCommission || 0), 0);
+        const totalNet = bonsValides.reduce((acc, b) => acc + Number(b.montantNet ?? (Number(b.montantFinal || 0) - Number(b.montantCommission || 0))), 0);
+
+        const maintenant = new Date();
+        const bonsValidesCeMois = bonsValides.filter(b => {
+            const d = new Date(b.valideLe || b.createdAt);
+            return d.getMonth() === maintenant.getMonth() && d.getFullYear() === maintenant.getFullYear();
+        });
+        const brutMois = bonsValidesCeMois.reduce((acc, b) => acc + Number(b.montantFinal || 0), 0);
+        const commissionMois = bonsValidesCeMois.reduce((acc, b) => acc + Number(b.montantCommission || 0), 0);
+        const netMois = brutMois - commissionMois;
 
         const profil = {
             ...fournisseur.toJSON(),
@@ -56,9 +73,15 @@ exports.getDashboardFournisseur = async (req, res) => {
                 profil,
                 stats: {
                     totalProduits,
-                    totalRevenus,
                     totalCommandes,
-                    totalMissions: missions.length
+                    totalMissions: missions.length,
+                    totalBrut,
+                    totalCommission,
+                    totalNet,
+                    totalRevenus: netMois,
+                    brutMois,
+                    commissionMois,
+                    netMois
                 },
                 missions,
                 commandesRecentes
@@ -70,8 +93,6 @@ exports.getDashboardFournisseur = async (req, res) => {
     }
 };
 
-// ➕ IMPLÉMENTATION AJOUTÉE : la fonction était vide (aucune réponse envoyée),
-// ce qui provoquait un timeout côté serveur remonté en 503 côté frontend.
 exports.getDashboardClient = async (req, res) => {
     try {
         const clientId = req.user.id;
@@ -79,11 +100,9 @@ exports.getDashboardClient = async (req, res) => {
         const [missions, totalReservations] = await Promise.all([
             Reservation.findAll({
                 where: { clientId },
-                attributes: ['id', 'besoin', 'adresse', 'telephone', 'clientNom', 'dateIntervention', 'type', 'parcours', 'statut', 'descriptionTravail', 'montantMainOeuvre', 'piecesFournies', 'createdAt'],
                 include: [
-                    // ✅ Alias corrigé d'après models/index.js : Reservation.belongsTo(Fournisseur, { as: 'prestataire' })
                     { model: Fournisseur, as: 'prestataire', attributes: ['id', 'nomEntreprise', 'telephone'] },
-                    { model: BonIntervention, as: 'bonIntervention', attributes: { exclude: ['descriptionTravail', 'montantMainOeuvre'] } }
+                    { model: BonIntervention, as: 'bonIntervention' }
                 ],
                 limit: 20,
                 order: [['createdAt', 'DESC']]

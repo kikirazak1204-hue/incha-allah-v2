@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { protect, authorize } = require('../middleware/auth');
-const { Devis, Reservation, Fournisseur } = require('../models');
+// ✅ CORRIGÉ : User n'était pas importé alors qu'il est utilisé plus bas
+// dans l'include imbriqué de /mes-devis (model: User, as: 'client').
+// Ça faisait planter la route à chaque appel — probable cause de l'onglet
+// "Mes devis envoyés" toujours vide côté prestataire.
+const { Devis, Reservation, Fournisseur, User } = require('../models');
 const { Op } = require('sequelize');
 
 // ── POST /api/devis — Presta envoie son devis ─────────────
@@ -77,6 +81,7 @@ router.get('/reservation/:id', protect, async (req, res) => {
         });
         res.json({ success: true, data: devis });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 });
@@ -103,12 +108,12 @@ router.put('/:id/accepter', protect, async (req, res) => {
 
         res.json({ success: true, message: 'Devis accepté avec succès.' });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 });
 
 // ── PUT /api/devis/annuler/:reservationId ──────────────────
-// Nettoyé de la logique de remboursement financier (Phase 1/2)
 router.put('/annuler/:reservationId', protect, async (req, res) => {
     try {
         const reservation = await Reservation.findByPk(req.params.reservationId);
@@ -117,6 +122,7 @@ router.put('/annuler/:reservationId', protect, async (req, res) => {
         await reservation.update({ statut: 'ANNULEE' });
         res.json({ success: true, message: 'Réservation annulée.' });
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 });

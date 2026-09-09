@@ -27,16 +27,35 @@ const BonIntervention = sequelize.define('BonIntervention', {
     },
     piecesOutils: {
         type: DataTypes.TEXT,
-        allowNull: true // optionnel
+        allowNull: true
     },
     montantPiecesOutils: {
         type: DataTypes.DECIMAL(10, 2),
-        allowNull: false, // 🟢 CORRECTION : Fini les NULL, on force toujours à un nombre !
+        allowNull: false,
         defaultValue: 0.00
     },
     montantFinal: {
         type: DataTypes.DECIMAL(10, 2),
-        allowNull: false // Sera calculé automatiquement par le Hook ci-dessous !
+        allowNull: false // Calculé automatiquement par le Hook ci-dessous
+    },
+
+    // ── Commission Kanari — CORRIGÉ : ces trois champs existaient déjà
+    // en base (migration 20260908000002) mais n'étaient pas déclarés ici,
+    // donc Sequelize les ignorait silencieusement à chaque écriture.
+    // Le taux est figé sur CE bon au moment de sa création et ne change
+    // jamais rétroactivement, même si le taux standard est modifié
+    // ensuite (voir Setting 'commission.taux_standard').
+    tauxCommissionApplique: {
+        type: DataTypes.DECIMAL(5, 2),
+        allowNull: true
+    },
+    montantCommission: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true
+    },
+    montantNet: {
+        type: DataTypes.DECIMAL(10, 2),
+        allowNull: true
     },
 
     // ── Validation côté client ─────────────────────────
@@ -50,16 +69,15 @@ const BonIntervention = sequelize.define('BonIntervention', {
     },
     valideAutomatiquement: {
         type: DataTypes.BOOLEAN,
-        defaultValue: false // true si validé après 24h sans action client
+        defaultValue: false
     },
 
-    // ── Note optionnelle du client ──────────────────────
     note: {
         type: DataTypes.INTEGER,
         allowNull: true,
         validate: {
-            min: 1, // 🟢 CORRECTION : Impossible de mettre moins de 1
-            max: 5  // 🟢 CORRECTION : Impossible de mettre plus de 5
+            min: 1,
+            max: 5
         }
     },
     commentaire: {
@@ -71,20 +89,13 @@ const BonIntervention = sequelize.define('BonIntervention', {
     tableName: 'bons_intervention',
     timestamps: true,
 
-    // 🔥 LA MAGIE EST ICI : LES HOOKS
     hooks: {
-        // Avant de valider et d'enregistrer en base de données...
         beforeValidate: (bon) => {
-            // 1. On s'assure que les montants sont bien des nombres (ou 0 par défaut)
             const mainOeuvre = parseFloat(bon.montantMainOeuvre) || 0;
             const pieces = parseFloat(bon.montantPiecesOutils) || 0;
 
-            // 2. On nettoie la valeur de pièces pour éviter un NULL en base
             bon.montantMainOeuvre = mainOeuvre;
             bon.montantPiecesOutils = pieces;
-
-            // 3. ON CALCULE LE MONTANT FINAL AUTOMATIQUEMENT !
-            // Plus de risque de bug si le frontend oublie de l'envoyer.
             bon.montantFinal = mainOeuvre + pieces;
         }
     }

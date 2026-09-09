@@ -1,6 +1,19 @@
-const { BonIntervention, Reservation, Fournisseur, User } = require('../models');
+const { BonIntervention, Reservation, Fournisseur, User, Setting } = require('../models');
 const { Op } = require('sequelize');
 const { sendPushNotification } = require('../utils/firebaseNotifier');
+
+const TAUX_COMMISSION_DEFAUT = 10; // utilisé uniquement si le paramètre est introuvable en base
+
+async function getTauxCommission() {
+    try {
+        const setting = await Setting.findOne({ where: { cle: 'commission.taux_standard' } });
+        if (!setting) return TAUX_COMMISSION_DEFAUT;
+        const taux = parseFloat(setting.valeur);
+        return isNaN(taux) ? TAUX_COMMISSION_DEFAUT : taux;
+    } catch {
+        return TAUX_COMMISSION_DEFAUT;
+    }
+}
 
 // ── POST /api/bons-intervention — Le prestataire crée le bon ──
 exports.creerBonIntervention = async (req, res) => {
@@ -13,7 +26,6 @@ exports.creerBonIntervention = async (req, res) => {
             montantPiecesOutils
         } = req.body;
 
-        // 1. Validation des champs obligatoires
         if (!reservationId || !descriptionTravail || montantMainOeuvre === undefined) {
             return res.status(400).json({
                 success: false,
@@ -21,13 +33,11 @@ exports.creerBonIntervention = async (req, res) => {
             });
         }
 
-        // 2. Récupération du profil fournisseur connecté
         const fournisseur = await Fournisseur.findOne({ where: { userId: req.user.id } });
         if (!fournisseur) {
             return res.status(403).json({ success: false, message: 'Profil fournisseur introuvable.' });
         }
 
-        // 3. Vérification de la réservation + Vérification de propriété
         const reservation = await Reservation.findByPk(reservationId, {
             include: [{ model: User, as: 'client', attributes: ['id', 'fcmToken', 'prenom', 'nom'] }]
         });
@@ -36,12 +46,10 @@ exports.creerBonIntervention = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Réservation introuvable.' });
         }
 
-        // 🔒 Sécurité : Vérifier que la mission appartient bien à CE fournisseur
         if (reservation.fournisseurId !== fournisseur.id) {
             return res.status(403).json({ success: false, message: 'Cette réservation ne vous est pas assignée.' });
         }
 
-        // 4. Empêcher les doublons
         const existant = await BonIntervention.findOne({ where: { reservationId } });
         if (existant) {
             return res.status(409).json({
@@ -50,16 +58,21 @@ exports.creerBonIntervention = async (req, res) => {
             });
         }
 
-        // 5. Calculs des montants
         const mainOeuvre = parseFloat(montantMainOeuvre) || 0;
         const montantPieces = montantPiecesOutils ? parseFloat(montantPiecesOutils) : 0;
         const montantFinal = mainOeuvre + montantPieces;
 
-        // 6. Date limite commission (48h)
+        // ── Calcul réel de la commission Kanari ──
+        // Le taux appliqué est figé sur CE bon au moment de sa création :
+        // si le taux standard change plus tard, ce bon garde son taux
+        // d'origine (cohérent avec la règle "jamais rétroactif").
+        const tauxCommission = await getTauxCommission();
+        const montantCommission = Math.round((montantFinal * tauxCommission) / 100 * 100) / 100;
+        const montantNet = Math.round((montantFinal - montantCommission) * 100) / 100;
+
         const commissionDateLimite = new Date();
         commissionDateLimite.setHours(commissionDateLimite.getHours() + 48);
 
-        // 7. Création du Bon
         const bon = await BonIntervention.create({
             reservationId,
             fournisseurId: fournisseur.id,
@@ -67,21 +80,22 @@ exports.creerBonIntervention = async (req, res) => {
             montantMainOeuvre: mainOeuvre,
             piecesOutils: piecesOutils || null,
             montantPiecesOutils: montantPieces,
-            montantFinal
+            montantFinal,
+            tauxCommissionApplique: tauxCommission,
+            montantCommission,
+            montantNet
         });
 
-        // 8. Mise à jour statut réservation
         await reservation.update({
             statut: 'TERMINEE',
             commissionDateLimite
         });
 
-        // 📲 9. NOTIFICATION PUSH CLIENT (Non bloquante)
         try {
             if (reservation.clientId && typeof sendPushNotification === 'function') {
                 await sendPushNotification({
                     userId: reservation.clientId,
-                    title: "📋 Bon d'intervention reçu !",
+                    title: "Bon d'intervention reçu",
                     body: `Le prestataire a terminé l'intervention #${reservationId}. Validez le montant (${montantFinal.toLocaleString()} FCFA) pour clôturer la mission.`,
                     data: {
                         type: 'BON_INTERVENTION',
@@ -91,7 +105,7 @@ exports.creerBonIntervention = async (req, res) => {
                 });
             }
         } catch (notifErr) {
-            console.error('⚠️ Avertissement notification push :', notifErr.message);
+            console.error('Avertissement notification push :', notifErr.message);
         }
 
         return res.status(201).json({
@@ -101,7 +115,7 @@ exports.creerBonIntervention = async (req, res) => {
         });
 
     } catch (err) {
-        console.error('❌ Erreur creerBonIntervention:', err.message);
+        console.error('Erreur creerBonIntervention:', err.message);
         return res.status(500).json({ success: false, message: 'Erreur serveur lors de la création du bon.' });
     }
 };
@@ -122,7 +136,7 @@ exports.getBonParReservation = async (req, res) => {
 
         return res.json({ success: true, data: bon });
     } catch (err) {
-        console.error('❌ Erreur getBonParReservation:', err.message);
+        console.error('Erreur getBonParReservation:', err.message);
         return res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 };
@@ -141,13 +155,11 @@ exports.validerBon = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Ce bon a déjà été validé.' });
         }
 
-        // 🔒 Sécurité : Vérifier que c'est bien le client qui fait la validation
         const reservation = await Reservation.findByPk(bon.reservationId);
         if (!reservation || reservation.clientId !== req.user.id) {
             return res.status(403).json({ success: false, message: 'Seul le client concerné peut valider cette prestation.' });
         }
 
-        // 1. Validation du bon
         await bon.update({
             valide: true,
             valideLe: new Date(),
@@ -156,10 +168,8 @@ exports.validerBon = async (req, res) => {
             commentaire: commentaire || null,
         });
 
-        // 2. Clôture de la réservation
         await reservation.update({ statut: 'VALIDEE' });
 
-        // 3. Mise à jour sécurisée de la moyenne du Fournisseur
         if (note && !isNaN(note)) {
             const fournisseur = await Fournisseur.findByPk(bon.fournisseurId);
             if (fournisseur) {
@@ -180,27 +190,32 @@ exports.validerBon = async (req, res) => {
         return res.json({ success: true, data: bon, message: 'Prestation validée avec succès.' });
 
     } catch (err) {
-        console.error('❌ Erreur validerBon:', err.message);
+        console.error('Erreur validerBon:', err.message);
         return res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 };
 
-// ── GET /api/bons-intervention/en-attente — Pour le job de validation auto 24h ──
+// ── GET /api/bons-intervention/en-attente — Pour le job de validation auto ──
 exports.getBonsEnAttenteValidation = async (req, res) => {
     try {
-        const limite24h = new Date();
-        limite24h.setHours(limite24h.getHours() - 24);
+        const setting = await Setting.findOne({ where: { cle: 'bon_intervention.delai_validation_auto_heures' } });
+        const delaiHeures = setting ? parseInt(setting.valeur, 10) : 24;
+
+        const limite = new Date();
+        limite.setHours(limite.getHours() - delaiHeures);
 
         const bons = await BonIntervention.findAll({
             where: {
                 valide: false,
-                createdAt: { [Op.lte]: limite24h }
+                createdAt: { [Op.lte]: limite }
             }
         });
 
         return res.json({ success: true, data: bons });
     } catch (err) {
-        console.error('❌ Erreur getBonsEnAttenteValidation:', err.message);
+        console.error('Erreur getBonsEnAttenteValidation:', err.message);
         return res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 };
+
+exports.getTauxCommission = getTauxCommission;

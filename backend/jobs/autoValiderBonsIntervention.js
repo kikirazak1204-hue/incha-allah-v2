@@ -2,28 +2,31 @@
 //
 // Job planifié — s'exécute périodiquement (voir server.js) pour valider
 // automatiquement tout bon d'intervention resté sans réponse du client
-// pendant plus de 24h.
-//
-// Pourquoi ce fichier existe : le modèle BonIntervention prévoit déjà un
-// champ `valideAutomatiquement` (booléen) — l'intention de cette
-// validation automatique existait dans le schéma dès le départ, mais
-// aucun code ne l'exécutait réellement. Résultat possible sans ce job :
-// une mission reste bloquée en 'TERMINEE' indéfiniment si le client ne
-// valide jamais, et le prestataire n'est jamais payé.
-//
-// Ce fichier est volontairement séparé du contrôleur HTTP
-// (bonInterventionController.js) : ce n'est pas une route appelée par un
-// utilisateur, c'est une tâche de fond invoquée par le serveur lui-même.
+// au-delà du délai configuré (paramètre
+// 'bon_intervention.delai_validation_auto_heures', 24h par défaut —
+// modifiable depuis l'admin sans redéployer, voir routes/settings.js).
 
 const { Op } = require('sequelize');
-const { BonIntervention, Reservation, Fournisseur } = require('../models');
+const { BonIntervention, Reservation, Fournisseur, Setting } = require('../models');
 const { sendPushNotification } = require('../utils/firebaseNotifier');
 
-const DELAI_VALIDATION_AUTO_HEURES = 24;
+const DELAI_DEFAUT_HEURES = 24;
+
+async function getDelaiHeures() {
+    try {
+        const setting = await Setting.findOne({ where: { cle: 'bon_intervention.delai_validation_auto_heures' } });
+        if (!setting) return DELAI_DEFAUT_HEURES;
+        const delai = parseInt(setting.valeur, 10);
+        return isNaN(delai) ? DELAI_DEFAUT_HEURES : delai;
+    } catch {
+        return DELAI_DEFAUT_HEURES;
+    }
+}
 
 async function runAutoValiderBonsIntervention() {
+    const delaiHeures = await getDelaiHeures();
     const seuil = new Date();
-    seuil.setHours(seuil.getHours() - DELAI_VALIDATION_AUTO_HEURES);
+    seuil.setHours(seuil.getHours() - delaiHeures);
 
     let bonsEligibles = [];
     try {
@@ -39,11 +42,11 @@ async function runAutoValiderBonsIntervention() {
     }
 
     if (bonsEligibles.length === 0) {
-        console.log('[auto-validation] Aucun bon en attente depuis plus de 24h.');
+        console.log(`[auto-validation] Aucun bon en attente depuis plus de ${delaiHeures}h.`);
         return { traites: 0, erreurs: 0 };
     }
 
-    console.log(`[auto-validation] ${bonsEligibles.length} bon(s) éligible(s) à la validation automatique.`);
+    console.log(`[auto-validation] ${bonsEligibles.length} bon(s) éligible(s) (délai : ${delaiHeures}h).`);
 
     let traites = 0;
     let erreurs = 0;
@@ -57,9 +60,6 @@ async function runAutoValiderBonsIntervention() {
                 continue;
             }
 
-            // On ne valide automatiquement que si la mission est bien
-            // encore au statut TERMINEE (évite d'écraser un état déjà
-            // modifié entre-temps, ex : litige ouvert, annulation).
             if (reservation.statut !== 'TERMINEE') {
                 console.warn(`[auto-validation] Bon #${bon.id} : réservation #${reservation.id} n'est plus TERMINEE (statut actuel : ${reservation.statut}), ignoré.`);
                 continue;
@@ -73,14 +73,12 @@ async function runAutoValiderBonsIntervention() {
 
             await reservation.update({ statut: 'VALIDEE' });
 
-            // Notifications non bloquantes — un échec ici ne doit jamais
-            // empêcher la validation elle-même.
             try {
                 if (reservation.clientId) {
                     await sendPushNotification({
                         userId: reservation.clientId,
                         title: 'Prestation validée automatiquement',
-                        body: `Aucune action de votre part sous 24h : la mission #${reservation.id} a été validée automatiquement et le paiement du prestataire a été libéré.`,
+                        body: `Aucune action de votre part sous ${delaiHeures}h : la mission #${reservation.id} a été validée automatiquement et le paiement du prestataire a été libéré.`,
                         data: { type: 'BON_VALIDE_AUTO', reservationId: String(reservation.id), bonId: String(bon.id) }
                     });
                 }
@@ -94,7 +92,7 @@ async function runAutoValiderBonsIntervention() {
                     await sendPushNotification({
                         userId: fournisseur.userId,
                         title: 'Mission validée automatiquement',
-                        body: `Le client n'a pas répondu sous 24h. La mission #${reservation.id} est validée et votre commission est due.`,
+                        body: `Le client n'a pas répondu sous ${delaiHeures}h. La mission #${reservation.id} est validée et votre commission est due.`,
                         data: { type: 'BON_VALIDE_AUTO', reservationId: String(reservation.id), bonId: String(bon.id) }
                     });
                 }
@@ -114,4 +112,4 @@ async function runAutoValiderBonsIntervention() {
     return { traites, erreurs };
 }
 
-module.exports = { runAutoValiderBonsIntervention, DELAI_VALIDATION_AUTO_HEURES };
+module.exports = { runAutoValiderBonsIntervention };

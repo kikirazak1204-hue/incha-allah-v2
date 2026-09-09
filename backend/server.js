@@ -69,18 +69,6 @@ app.get('/api/health', (req, res) => {
 });
 
 // ==========================================
-// SUPPRIMÉ : ancienne route factice /api/reservations/global déclarée
-// directement sur `app`. Elle interceptait TOUTES les réservations avant
-// qu'elles n'atteignent le vrai contrôleur (routes/reservations.js →
-// createGlobalReservation), qui écrit réellement en base et notifie le
-// prestataire. Résultat concret du bug : chaque réservation soumise
-// depuis ReservationPage.jsx recevait une fausse confirmation, sans
-// jamais être créée en base — aucun fournisseur ne la recevait jamais.
-// La vraie route est maintenant la seule à exister, montée plus bas via
-// app.use('/api/reservations', require('./routes/reservations')).
-// ==========================================
-
-// ==========================================
 // 4. ENREGISTREMENT DES ROUTES API
 // ==========================================
 
@@ -102,6 +90,7 @@ app.use('/api/factures', require('./routes/factures'));
 app.use('/api/soldes', require('./routes/soldes'));
 app.use('/api/missions', require('./routes/missions'));
 app.use('/api/whatsapp', require('./routes/whatsapp'));
+app.use('/api/settings', require('./routes/settings'));
 
 // ==========================================
 // 5. GESTION DES ROUTES INEXISTANTES (404)
@@ -151,7 +140,7 @@ const repairDatabase = async () => {
         "ALTER TABLE produits ADD COLUMN categorie VARCHAR(255);",
         "ALTER TABLE produits ADD COLUMN quantite INT DEFAULT 0;",
         "ALTER TABLE users ADD COLUMN fcm_token TEXT;",
-        // ── Ajout des colonnes manquantes pour les réservations ──
+        // ── Colonnes réservations ──
         "ALTER TABLE reservations ADD COLUMN services JSON;",
         "ALTER TABLE reservations ADD COLUMN montantTotal DECIMAL(10,2) DEFAULT 0;",
         "ALTER TABLE reservations ADD COLUMN type VARCHAR(50) DEFAULT 'classique';",
@@ -163,7 +152,10 @@ const repairDatabase = async () => {
         "ALTER TABLE reservations ADD COLUMN serviceId INT;",
         "ALTER TABLE reservations ADD COLUMN serviceNom VARCHAR(255);",
         "ALTER TABLE reservations ADD COLUMN valideAutomatiquement BOOLEAN DEFAULT false;",
-        "ALTER TABLE reservations ADD COLUMN besoin TEXT;"
+        "ALTER TABLE reservations ADD COLUMN besoin TEXT;",
+        "ALTER TABLE reservations ADD COLUMN heureIntervention VARCHAR(20);",
+        // ── Colonnes services ──
+        "ALTER TABLE services ADD COLUMN categorie VARCHAR(50) DEFAULT 'default';"
     ];
 
     console.log("🛠️ Vérification des colonnes manquantes...");
@@ -185,14 +177,10 @@ const repairDatabase = async () => {
 // ==========================================
 // ⏱️ PLANIFICATION DU JOB DE VALIDATION AUTOMATIQUE
 // ==========================================
-// Exécute la validation automatique des bons d'intervention en attente
-// depuis plus de 24h : une fois au démarrage (rattrape ce qui s'est
-// accumulé pendant que le serveur était éteint), puis toutes les heures.
 const INTERVALLE_JOB_MS = 60 * 60 * 1000; // 1 heure
 let intervalleJobBons = null;
 
 const demarrerJobAutoValidation = () => {
-    // Premier passage peu après le démarrage, pour ne pas bloquer le boot
     setTimeout(() => {
         runAutoValiderBonsIntervention().catch(err =>
             console.error('[auto-validation] Erreur au passage initial :', err.message)

@@ -2,9 +2,20 @@ const { sequelize, Reservation, Fournisseur } = require('../models');
 const { sendNotification } = require('../utils/notifications');
 
 // ════════════════════════════════════════════════════════════════
-// POST /api/reservations/global
-// 💡 Logique globale multi-services (Conservée à 100% de ton code)
+// Ce fichier a été nettoyé : il contenait plusieurs fonctions
+// (prestaAccepter, prestaRefuser, terminerMission, assignerFournisseur,
+// autoriserDemarrage, adminCreerReservation, updateStatut,
+// deleteReservation) qui dupliquaient — en moins bien, et parfois de
+// façon dangereuse (aucune vérification de propriété, statuts invalides,
+// contournement complet du bon d'intervention) — ce que
+// backend/routes/missions.js et backend/routes/admin.js font déjà
+// correctement et que le frontend appelle réellement.
+//
+// Ce fichier ne garde désormais que ce qui n'existe NULLE PART ailleurs :
+// la création de réservation, et les deux listes en lecture seule
+// utilisées par le client et le prestataire.
 // ════════════════════════════════════════════════════════════════
+
 function formaterBesoin(detailsParticuliers = {}) {
     const lignes = Object.entries(detailsParticuliers)
         .filter(([, valeur]) => valeur !== undefined && valeur !== null && valeur !== '')
@@ -12,6 +23,8 @@ function formaterBesoin(detailsParticuliers = {}) {
     return lignes.join('\n') || null;
 }
 
+// ── POST /api/reservations/global (et /api/reservations) ───────
+// Crée UNE Reservation par service sélectionné (voir formaterBesoin).
 exports.createGlobalReservation = async (req, res) => {
     const transaction = await sequelize.transaction();
     try {
@@ -19,14 +32,12 @@ exports.createGlobalReservation = async (req, res) => {
             clientNom,
             telephone,
             adresse,
-            coordonneesGps,
             dateIntervention,
             modePaiement,
             fournisseurId,
             services
         } = req.body;
 
-        // 1. Validation de base
         if (!clientNom || !telephone || !adresse || !services || !Array.isArray(services) || services.length === 0) {
             await transaction.rollback();
             return res.status(400).json({
@@ -36,8 +47,6 @@ exports.createGlobalReservation = async (req, res) => {
         }
 
         const parsedFournisseurId = fournisseurId ? parseInt(fournisseurId, 10) : null;
-
-        // 2. Création d'UNE Reservation (= UNE mission) par service
         const reservationsCreees = [];
 
         for (const srv of services) {
@@ -70,7 +79,6 @@ exports.createGlobalReservation = async (req, res) => {
 
         await transaction.commit();
 
-        // 3. Notifications (non bloquantes)
         for (const reservation of reservationsCreees) {
             try {
                 if (reservation.fournisseurId) {
@@ -118,11 +126,7 @@ exports.createGlobalReservation = async (req, res) => {
     }
 };
 
-// ════════════════════════════════════════════════════════════════
-// FONCTIONS COMPLÉMENTAIRES (Pour faire le lien avec les Routes)
-// ════════════════════════════════════════════════════════════════
-
-// ── Espace Client ───────────────────────────────────────────────
+// ── GET /api/reservations/mes-reservations — Espace Client ─────
 exports.getMesReservations = async (req, res) => {
     try {
         const reservations = await Reservation.findAll({
@@ -136,128 +140,30 @@ exports.getMesReservations = async (req, res) => {
     }
 };
 
-// ── Espace Prestataire ──────────────────────────────────────────
+// ── GET /api/reservations/disponibles — Espace Prestataire ─────
+//
+// ✅ CORRIGÉ : retournait TOUTES les demandes EN_ATTENTE de la plateforme,
+// tous services confondus — un plombier voyait des demandes de traiteur.
+// Filtre désormais sur la spécialité du prestataire (son serviceId) et
+// exclut les demandes déjà assignées à quelqu'un d'autre.
 exports.getReservationsDisponibles = async (req, res) => {
     try {
+        const fournisseur = await Fournisseur.findOne({ where: { userId: req.user.id } });
+        if (!fournisseur) {
+            return res.status(403).json({ success: false, message: 'Profil fournisseur introuvable.' });
+        }
+
         const reservations = await Reservation.findAll({
-            where: { statut: 'EN_ATTENTE' },
+            where: {
+                statut: 'EN_ATTENTE',
+                fournisseurId: null,
+                serviceId: fournisseur.serviceId
+            },
             order: [['createdAt', 'DESC']]
         });
         return res.status(200).json({ success: true, data: reservations });
     } catch (error) {
         console.error('Erreur getReservationsDisponibles :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.prestaAccepter = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Mission introuvable.' });
-        reservation.statut = 'ACCEPTEE';
-        await reservation.save();
-        return res.status(200).json({ success: true, message: 'Mission acceptée.', data: reservation });
-    } catch (error) {
-        console.error('Erreur prestaAccepter :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.prestaRefuser = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Mission introuvable.' });
-        reservation.statut = 'REFUSEE';
-        await reservation.save();
-        return res.status(200).json({ success: true, message: 'Mission refusée.', data: reservation });
-    } catch (error) {
-        console.error('Erreur prestaRefuser :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.terminerMission = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Mission introuvable.' });
-        reservation.statut = 'TERMINEE';
-        await reservation.save();
-        return res.status(200).json({ success: true, message: 'Mission terminée.', data: reservation });
-    } catch (error) {
-        console.error('Erreur terminerMission :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-// ── Espace Administrateur ───────────────────────────────────────
-exports.getAdminReservations = async (req, res) => {
-    try {
-        const reservations = await Reservation.findAll({ order: [['createdAt', 'DESC']] });
-        return res.status(200).json({ success: true, data: reservations });
-    } catch (error) {
-        console.error('Erreur getAdminReservations :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.updateStatut = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Introuvable.' });
-        reservation.statut = req.body.statut || reservation.statut;
-        await reservation.save();
-        return res.status(200).json({ success: true, data: reservation });
-    } catch (error) {
-        console.error('Erreur updateStatut :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.assignerFournisseur = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Introuvable.' });
-        reservation.fournisseurId = req.body.fournisseurId;
-        reservation.statut = 'ASSIGNEE';
-        await reservation.save();
-        return res.status(200).json({ success: true, data: reservation });
-    } catch (error) {
-        console.error('Erreur assignerFournisseur :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.autoriserDemarrage = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Introuvable.' });
-        reservation.statut = 'EN_COURS';
-        await reservation.save();
-        return res.status(200).json({ success: true, data: reservation });
-    } catch (error) {
-        console.error('Erreur autoriserDemarrage :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.adminCreerReservation = async (req, res) => {
-    try {
-        const reservation = await Reservation.create(req.body);
-        return res.status(201).json({ success: true, data: reservation });
-    } catch (error) {
-        console.error('Erreur adminCreerReservation :', error);
-        return res.status(500).json({ success: false, message: 'Erreur serveur.' });
-    }
-};
-
-exports.deleteReservation = async (req, res) => {
-    try {
-        const reservation = await Reservation.findByPk(req.params.id);
-        if (!reservation) return res.status(404).json({ success: false, message: 'Introuvable.' });
-        await reservation.destroy();
-        return res.status(200).json({ success: true, message: 'Supprimée.' });
-    } catch (error) {
-        console.error('Erreur deleteReservation :', error);
         return res.status(500).json({ success: false, message: 'Erreur serveur.' });
     }
 };

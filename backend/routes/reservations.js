@@ -1,32 +1,26 @@
 const express = require('express');
 const router = express.Router();
-const { protect, adminOnly } = require('../middleware/auth');
+const { protect } = require('../middleware/auth');
 const resController = require('../controllers/reservationController');
 
-// ── 🌍 Route Globale Multi-Services (Kanari Pro) ──────────
-// 💡 On délègue TOUTE la logique au contrôleur pour bénéficier 
-// des transactions et des notifications.
-router.post('/global', resController.createGlobalReservation);
+// ════════════════════════════════════════════════════════════════
+// Nettoyé : toutes les routes d'accepter/refuser/démarrer/terminer/
+// assigner/autoriser/créer-par-admin/supprimer une mission vivent
+// désormais UNIQUEMENT dans routes/missions.js (prestataire) et
+// routes/admin.js (admin) — les versions qui existaient ici en double
+// n'étaient pas sécurisées (aucune vérification de propriété) et
+// utilisaient des statuts incohérents avec le reste de l'application.
+// Voir reservationController.js pour le détail de ce qui a été retiré.
+// ════════════════════════════════════════════════════════════════
 
-// ── Public / Client ───────────────────────────────────────
-// CORRECTION : On utilise createGlobalReservation au lieu de createReservation (qui n'existait plus)
+// ── Création de réservation (public ou connecté) ────────────────
+router.post('/global', resController.createGlobalReservation);
 router.post('/', resController.createGlobalReservation);
 
-// Le token de l'utilisateur connecté ("protect") suffira grâce à req.user.id
+// ── Espace Client ────────────────────────────────────────────────
 router.get('/mes-reservations', protect, resController.getMesReservations);
 
-// ── Presta ────────────────────────────────────────────────
+// ── Espace Prestataire ───────────────────────────────────────────
 router.get('/disponibles', protect, resController.getReservationsDisponibles);
-router.put('/:id/presta-accepter', protect, resController.prestaAccepter);
-router.put('/:id/presta-refuser', protect, resController.prestaRefuser);
-router.post('/:id/terminer', protect, resController.terminerMission);
-
-// ── Admin ─────────────────────────────────────────────────
-router.get('/admin', protect, adminOnly, resController.getAdminReservations);
-router.put('/:id/statut', protect, adminOnly, resController.updateStatut);
-router.put('/:id/assigner', protect, adminOnly, resController.assignerFournisseur);
-router.put('/:id/autoriser', protect, adminOnly, resController.autoriserDemarrage);
-router.post('/admin-creer', protect, adminOnly, resController.adminCreerReservation);
-router.delete('/:id', protect, adminOnly, resController.deleteReservation);
 
 module.exports = router;

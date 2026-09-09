@@ -15,6 +15,8 @@ const Solde = require('./Solde');
 const Retrait = require('./Retrait');
 const Devis = require('./Devis');
 const BonIntervention = require('./BonIntervention');
+const Setting = require('./Setting');
+const SettingHistory = require('./SettingHistory');
 
 // 2. Définition des associations
 
@@ -54,7 +56,6 @@ Commande.belongsTo(User, { foreignKey: 'clientId', as: 'clientCommande' });
 Commande.hasMany(Facture, { foreignKey: 'commandeId', as: 'facturesCommande' });
 Facture.belongsTo(Commande, { foreignKey: 'commandeId', as: 'factureCommande' });
 
-// 💡 CORRECTION PAIEMENT - L'alias est passé à "as: 'commande'" pour correspondre au contrôleur
 Commande.hasMany(Paiement, { foreignKey: 'commandeId', as: 'paiements' });
 Paiement.belongsTo(Commande, { foreignKey: 'commandeId', as: 'commande' });
 
@@ -69,7 +70,6 @@ CommandeProduit.belongsTo(Produit, { foreignKey: 'produitId', as: 'produitComman
 User.hasMany(Reservation, { foreignKey: 'clientId', as: 'reservationsClient' });
 Reservation.belongsTo(User, { foreignKey: 'clientId', as: 'client' });
 
-// 💡 AJOUT PAIEMENT - Création de la relation Paiement ↔ Reservation manquante
 Reservation.hasMany(Paiement, { foreignKey: 'reservationId', as: 'paiements' });
 Paiement.belongsTo(Reservation, { foreignKey: 'reservationId', as: 'reservation' });
 
@@ -79,7 +79,6 @@ Message.belongsTo(Reservation, { foreignKey: 'reservationId', as: 'reservationMe
 // ==========================================
 // Paiement (Relation User)
 // ==========================================
-// 💡 AJOUT PAIEMENT - Lier le paiement au client pour la méthode getPaiementsClient
 User.hasMany(Paiement, { foreignKey: 'clientId', as: 'paiements' });
 Paiement.belongsTo(User, { foreignKey: 'clientId', as: 'client' });
 
@@ -113,6 +112,14 @@ BonIntervention.belongsTo(Reservation, { foreignKey: 'reservationId', as: 'reser
 Fournisseur.hasMany(BonIntervention, { foreignKey: 'fournisseurId', as: 'bonsIntervention' });
 BonIntervention.belongsTo(Fournisseur, { foreignKey: 'fournisseurId', as: 'fournisseurBon' });
 
+// ==========================================
+// Paramètres (Setting) — pas d'association FK stricte sur SettingHistory,
+// volontairement, pour garder l'historique même si un paramètre est
+// supprimé un jour.
+// ==========================================
+User.hasMany(SettingHistory, { foreignKey: 'modifiePar', as: 'modificationsParametres' });
+SettingHistory.belongsTo(User, { foreignKey: 'modifiePar', as: 'auteur' });
+
 // 3. Export global
 module.exports = {
   sequelize,
@@ -129,5 +136,7 @@ module.exports = {
   Solde,
   Retrait,
   Devis,
-  BonIntervention
+  BonIntervention,
+  Setting,
+  SettingHistory
 };

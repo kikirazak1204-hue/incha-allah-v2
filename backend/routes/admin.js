@@ -291,18 +291,51 @@ router.post('/reservations/admin-creer', protect, adminOnly, async (req, res) =>
     }
 });
 
+// 🟢 DELETE /api/admin/reservations/:id
+//
+// ✅ AJOUTÉ : le frontend (util/api.js → deleteReservation) appelait déjà
+// cette route depuis le début, mais elle n'existait nulle part à ce
+// chemin — seule une version équivalente vivait dans l'ancien
+// routes/reservations.js (désormais retiré). Sans cette route, supprimer
+// une réservation depuis l'admin échouait silencieusement en 404.
+router.delete('/reservations/:id', protect, adminOnly, async (req, res) => {
+    try {
+        const reservation = await Reservation.findByPk(req.params.id);
+        if (!reservation) return res.status(404).json({ success: false, message: 'Réservation introuvable.' });
+        await reservation.destroy();
+        res.json({ success: true, message: 'Réservation supprimée.' });
+    } catch (err) {
+        console.error("❌ Erreur DELETE /reservations/:id :", err);
+        res.status(500).json({ success: false, message: 'Erreur serveur.', error: err.message });
+    }
+});
+
 // ============================================================
 // 💳 GESTION DES PAIEMENTS
 // ============================================================
 
 router.get('/paiements', protect, adminOnly, async (req, res) => {
     try {
+        // ✅ CORRIGÉ : l'alias réel défini dans models/index.js est 'commande',
+        // pas 'commandePaiement' — Sequelize renvoyait une EagerLoadingError
+        // qui faisait planter tout l'onglet Paiements de l'admin.
+        // Ajout de l'inclusion Reservation, absente ici alors qu'un paiement
+        // peut être lié à une réservation plutôt qu'à une commande
+        // (voir backend/models/Paiement.js, champ reservationId).
         const paiements = await Paiement.findAll({
-            include: [{
-                model: Commande,
-                as: 'commandePaiement',
-                include: [{ model: User, as: 'clientCommande', attributes: ['id', 'nom', 'email'] }]
-            }],
+            include: [
+                {
+                    model: Commande,
+                    as: 'commande',
+                    required: false,
+                    include: [{ model: User, as: 'clientCommande', attributes: ['id', 'nom', 'email'] }]
+                },
+                {
+                    model: Reservation,
+                    as: 'reservation',
+                    required: false
+                }
+            ],
             order: [['createdAt', 'DESC']]
         });
         res.json({ success: true, data: paiements });

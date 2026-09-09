@@ -16,7 +16,8 @@ const Retrait = require('./Retrait');
 const Devis = require('./Devis');
 const BonIntervention = require('./BonIntervention');
 const Setting = require('./Setting');
-const SettingHistory = require('./SettingHistory');
+// Correction de la casse pour Render (h minuscule correspondant au fichier Git)
+const SettingHistory = require('./Settinghistory'); 
 
 // 2. Définition des associations
 
@@ -113,9 +114,7 @@ Fournisseur.hasMany(BonIntervention, { foreignKey: 'fournisseurId', as: 'bonsInt
 BonIntervention.belongsTo(Fournisseur, { foreignKey: 'fournisseurId', as: 'fournisseurBon' });
 
 // ==========================================
-// Paramètres (Setting) — pas d'association FK stricte sur SettingHistory,
-// volontairement, pour garder l'historique même si un paramètre est
-// supprimé un jour.
+// Paramètres (Setting) 
 // ==========================================
 User.hasMany(SettingHistory, { foreignKey: 'modifiePar', as: 'modificationsParametres' });
 SettingHistory.belongsTo(User, { foreignKey: 'modifiePar', as: 'auteur' });
